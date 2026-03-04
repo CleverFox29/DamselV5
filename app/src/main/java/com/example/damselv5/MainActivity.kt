@@ -289,9 +289,14 @@ fun MainScreen(
     val emergencyName = prefs.getString("primary_name", "Not Set") ?: "Not Set"
     val emergencyNumber = prefs.getString("primary_number", "Not Set") ?: "Not Set"
 
+    // Theme Customization
     val backgroundColor = if (isDark) Color(0xFF000000) else Color(0xFFFFFFFF)
+    val cardBackgroundColor = if (isDark) Color(0xFF121212) else Color(0xFFF1F3F4)
     val mainTextColor = if (isDark) Color.White else Color(0xFF000000)
     val secondaryTextColor = if (isDark) Color(0xFFB0B0B0) else Color(0xFF5F6368)
+
+    // SMS card background color logic
+    val smsCardBgColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
 
     Surface(color = backgroundColor) {
         Scaffold(
@@ -349,6 +354,8 @@ fun MainScreen(
                             contentColor = MaterialTheme.colorScheme.onPrimaryContainer
                         )
                     ) {
+                        Icon(Icons.Default.Bluetooth, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
                         Text("Connect", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                     }
                     Button(
@@ -361,6 +368,8 @@ fun MainScreen(
                             contentColor = MaterialTheme.colorScheme.onErrorContainer
                         )
                     ) {
+                        Icon(Icons.Default.BluetoothDisabled, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
                         Text("Disconnect", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
@@ -377,8 +386,8 @@ fun MainScreen(
                 ) {
                     Icon(Icons.Default.Warning, contentDescription = null, modifier = Modifier.size(24.dp))
                     Spacer(Modifier.width(8.dp))
-                    val buttonText = if (countdown > 0) "CANCEL (${countdown}s)" else "Panic button"
-                    Text(buttonText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    val buttonLabel = if (countdown > 0) "CANCEL (${countdown}s)" else "Panic button"
+                    Text(buttonLabel, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                 }
 
                 // 4. Primary Emergency Number Section
@@ -386,7 +395,7 @@ fun MainScreen(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp),
                     colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        containerColor = smsCardBgColor, // Matched to SMS card
                         contentColor = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 ) {
@@ -433,7 +442,7 @@ fun MainScreen(
                     modifier = Modifier.fillMaxWidth().weight(1f),
                     shape = RoundedCornerShape(16.dp),
                     colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        containerColor = smsCardBgColor,
                         contentColor = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 ) {
