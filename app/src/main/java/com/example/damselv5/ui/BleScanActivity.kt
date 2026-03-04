@@ -60,9 +60,14 @@ fun ScanScreen(
 
     val callback = remember {
         object : ScanCallback() {
+            @SuppressLint("MissingPermission")
             override fun onScanResult(callbackType: Int, result: ScanResult) {
-                if (devices.none { it.device.address == result.device.address }) {
-                    devices.add(result)
+                // Filter out devices with no name or blank names
+                val name = result.device.name
+                if (!name.isNullOrBlank()) {
+                    if (devices.none { it.device.address == result.device.address }) {
+                        devices.add(result)
+                    }
                 }
             }
         }
@@ -102,9 +107,15 @@ fun ScanScreen(
                         modifier = Modifier.fillMaxWidth().height(50.dp),
                         shape = CircleShape,
                         colors = if (isScanning) {
-                            ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                            ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.errorContainer,
+                                contentColor = MaterialTheme.colorScheme.onErrorContainer
+                            )
                         } else {
-                            ButtonDefaults.buttonColors()
+                            ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
                         }
                     ) {
                         Text(if (isScanning) "Stop Scan" else "Scan for nearby devices")
@@ -120,7 +131,7 @@ fun ScanScreen(
         ) {
             items(devices) { result ->
                 @SuppressLint("MissingPermission")
-                val name = result.device.name ?: "Unknown"
+                val name = result.device.name ?: ""
                 val address = result.device.address
                 
                 ListItem(

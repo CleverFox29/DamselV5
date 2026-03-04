@@ -6,6 +6,7 @@ import android.bluetooth.BluetoothProfile
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.media.AudioManager
 import android.media.RingtoneManager
 import android.net.Uri
 import android.os.*
@@ -30,9 +31,17 @@ class BleForegroundService : Service() {
     private lateinit var panicManager: PanicManager
     private lateinit var smsHelper: SmsHelper
     private lateinit var locationHelper: LocationHelper
+    private lateinit var audioManager: AudioManager
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     
     private var wakeLock: PowerManager.WakeLock? = null
+    private val originalVolumes = mutableMapOf<Int, Int>()
+    private val streamsToMute = intArrayOf(
+        AudioManager.STREAM_RING,
+        AudioManager.STREAM_NOTIFICATION,
+        AudioManager.STREAM_MUSIC,
+        AudioManager.STREAM_SYSTEM
+    )
 
     private var connectedDeviceName: String = "None"
     private var connectedDeviceAddress: String? = null
@@ -56,9 +65,18 @@ class BleForegroundService : Service() {
         bleManager = BleManager(this)
         smsHelper = SmsHelper(this)
         locationHelper = LocationHelper(this)
+        audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        
         panicManager = PanicManager(this, 
             onCountdownUpdate = { seconds ->
                 currentCountdown = seconds
+                if (seconds > 0) {
+                    muteDevice()
+                } else if (seconds == -1) {
+                    restoreVolume()
+                }
+                // Update global state for UI sync
+                BleStatus.updateCountdown(seconds)
                 updateStatus(connectionStatus)
             },
             onTriggerEmergency = {
@@ -97,6 +115,34 @@ class BleForegroundService : Service() {
         }
     }
 
+    private fun muteDevice() {
+        if (originalVolumes.isEmpty()) {
+            for (stream in streamsToMute) {
+                try {
+                    originalVolumes[stream] = audioManager.getStreamVolume(stream)
+                    audioManager.setStreamVolume(stream, 0, 0)
+                } catch (e: Exception) {
+                    Log.e("BleService", "Could not mute stream $stream: ${e.message}")
+                }
+            }
+            Log.d("BleService", "Device muted for emergency.")
+        }
+    }
+
+    private fun restoreVolume() {
+        if (originalVolumes.isNotEmpty()) {
+            for ((stream, volume) in originalVolumes) {
+                try {
+                    audioManager.setStreamVolume(stream, volume, 0)
+                } catch (e: Exception) {
+                    Log.e("BleService", "Could not restore stream $stream: ${e.message}")
+                }
+            }
+            originalVolumes.clear()
+            Log.d("BleService", "Volumes restored.")
+        }
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val address = intent?.getStringExtra("DEVICE_ADDRESS")
         val name = intent?.getStringExtra("DEVICE_NAME")
@@ -105,6 +151,7 @@ class BleForegroundService : Service() {
             ACTION_STOP_SERVICE -> {
                 getSharedPreferences("ble_prefs", MODE_PRIVATE).edit { clear() }
                 releaseWakeLock()
+                restoreVolume()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
                 return START_NOT_STICKY
@@ -190,7 +237,7 @@ class BleForegroundService : Service() {
             wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "DamselV5::PanicWakeLock")
         }
         if (wakeLock?.isHeld == false) {
-            wakeLock?.acquire(30000) // Increased to 30s for reliability
+            wakeLock?.acquire(30000) 
             Log.d("BleService", "WakeLock acquired.")
         }
     }
@@ -204,10 +251,8 @@ class BleForegroundService : Service() {
 
     @SuppressLint("MissingPermission")
     private fun triggerEmergencyAction() {
-        // 1. Immediately trigger the call in parallel to SMS
         initiateEmergencyCall()
 
-        // 2. Launch SMS sequence in background
         serviceScope.launch {
             val locationUrl = locationHelper.getLastLocation()
             val prefs = getSharedPreferences("emergency_prefs", MODE_PRIVATE)
@@ -239,7 +284,10 @@ class BleForegroundService : Service() {
                 Log.e("BleService", "Emergency SMS failed: ${e.message}")
             } finally {
                 currentCountdown = -1
+                // Update global state for UI sync
+                BleStatus.updateCountdown(-1)
                 updateStatus(connectionStatus)
+                restoreVolume()
                 handler.postDelayed({ releaseWakeLock() }, 5000)
             }
         }
@@ -259,7 +307,6 @@ class BleForegroundService : Service() {
                 addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
             }
             
-            // On newer Android, starting activity from background requires a high-priority context
             try {
                 startActivity(callIntent)
             } catch (e: Exception) {
@@ -297,7 +344,6 @@ class BleForegroundService : Service() {
             .setPriority(if (currentCountdown >= 0) Notification.PRIORITY_MAX else Notification.PRIORITY_DEFAULT)
             .setContentIntent(pendingIntent)
 
-        // Full Screen Intent is key for background breakthrough
         if (currentCountdown >= 0) {
             val prefs = getSharedPreferences("emergency_prefs", MODE_PRIVATE)
             val callIntent = Intent(this, EmergencyCallActivity::class.java).apply {
@@ -340,6 +386,7 @@ class BleForegroundService : Service() {
         bleManager.disconnect()
         handler.removeCallbacks(reconnectRunnable)
         releaseWakeLock()
+        restoreVolume()
         BleStatus.updateState("Disconnected")
     }
 

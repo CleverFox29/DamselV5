@@ -11,11 +11,18 @@ object BleStatus {
     private val _deviceName = MutableStateFlow("None")
     val deviceName: StateFlow<String> = _deviceName.asStateFlow()
 
+    private val _countdown = MutableStateFlow(-1)
+    val countdown: StateFlow<Int> = _countdown.asStateFlow()
+
     fun updateState(state: String) {
         _connectionState.value = state
     }
 
     fun updateDeviceName(name: String) {
         _deviceName.value = name
+    }
+
+    fun updateCountdown(seconds: Int) {
+        _countdown.value = seconds
     }
 }
