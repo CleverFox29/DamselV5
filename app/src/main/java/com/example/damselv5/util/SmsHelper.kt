@@ -6,7 +6,7 @@ import android.telephony.SmsManager
 import android.util.Log
 
 /**
- * Helper class to send silent background SMS with version compatibility.
+ * Helper class to send background SMS with support for long messages.
  */
 class SmsHelper(private val context: Context) {
 
@@ -19,8 +19,11 @@ class SmsHelper(private val context: Context) {
                 SmsManager.getDefault()
             }
             
-            smsManager.sendTextMessage(phoneNumber, null, message, null, null)
-            Log.d("SmsHelper", "Emergency SMS initiated to $phoneNumber")
+            // Use multi-part SMS to ensure links and long text aren't corrupted or split
+            val parts = smsManager.divideMessage(message)
+            smsManager.sendMultipartTextMessage(phoneNumber, null, parts, null, null)
+            
+            Log.d("SmsHelper", "Emergency multi-part SMS initiated to $phoneNumber")
         } catch (e: Exception) {
             Log.e("SmsHelper", "Emergency SMS failed for $phoneNumber: ${e.message}")
         }

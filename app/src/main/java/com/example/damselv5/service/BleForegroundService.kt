@@ -10,6 +10,7 @@ import android.media.RingtoneManager
 import android.net.Uri
 import android.os.*
 import android.telecom.TelecomManager
+import android.telephony.PhoneNumberUtils
 import android.util.Log
 import android.widget.Toast
 import androidx.core.content.edit
@@ -17,6 +18,7 @@ import com.example.damselv5.MainActivity
 import com.example.damselv5.ble.BleManager
 import com.example.damselv5.ble.BleStatus
 import com.example.damselv5.data.AppDatabase
+import com.example.damselv5.util.LocationHelper
 import com.example.damselv5.util.PanicManager
 import com.example.damselv5.util.SmsHelper
 import kotlinx.coroutines.*
@@ -26,6 +28,7 @@ class BleForegroundService : Service() {
     private lateinit var bleManager: BleManager
     private lateinit var panicManager: PanicManager
     private lateinit var smsHelper: SmsHelper
+    private lateinit var locationHelper: LocationHelper
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     
     private var wakeLock: PowerManager.WakeLock? = null
@@ -33,6 +36,7 @@ class BleForegroundService : Service() {
     private var connectedDeviceName: String = "None"
     private var connectedDeviceAddress: String? = null
     private var connectionStatus: String = "Disconnected"
+    private var currentCountdown: Int = -1
 
     private val handler = Handler(Looper.getMainLooper())
     private val reconnectRunnable = object : Runnable {
@@ -50,9 +54,16 @@ class BleForegroundService : Service() {
         super.onCreate()
         bleManager = BleManager(this)
         smsHelper = SmsHelper(this)
-        panicManager = PanicManager(this) {
-            triggerEmergencyAction()
-        }
+        locationHelper = LocationHelper(this)
+        panicManager = PanicManager(this, 
+            onCountdownUpdate = { seconds ->
+                currentCountdown = seconds
+                updateStatus(connectionStatus)
+            },
+            onTriggerEmergency = {
+                triggerEmergencyAction()
+            }
+        )
 
         bleManager.onConnectionStateChanged = { newState ->
             when (newState) {
@@ -66,13 +77,11 @@ class BleForegroundService : Service() {
                     }
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
-                    // Alert user ONLY if we were previously fully connected
                     if (connectionStatus == "Connected") {
                         showDisconnectAlert()
                     }
                     connectionStatus = "Disconnected"
                     updateStatus("Reconnecting...")
-                    // Restart reconnection loop
                     handler.removeCallbacks(reconnectRunnable)
                     handler.postDelayed(reconnectRunnable, 5000)
                 }
@@ -108,7 +117,6 @@ class BleForegroundService : Service() {
         }
 
         if (address != null) {
-            // New explicit connection request
             getSharedPreferences("ble_prefs", MODE_PRIVATE).edit {
                 putString("last_address", address)
                 putString("last_name", name)
@@ -119,13 +127,12 @@ class BleForegroundService : Service() {
             updateStatus("Connecting...")
             bleManager.connect(address)
         } else {
-            // System restart or sticky recovery
             val prefs = getSharedPreferences("ble_prefs", MODE_PRIVATE)
             val savedAddress = prefs.getString("last_address", null)
             if (savedAddress != null) {
                 connectedDeviceAddress = savedAddress
                 connectedDeviceName = prefs.getString("last_name", "Unknown") ?: "Unknown"
-                connectionStatus = "Disconnected" // Start in disconnected state to allow first reconnect
+                connectionStatus = "Disconnected"
                 updateStatus("Reconnecting...")
                 bleManager.connect(savedAddress)
             }
@@ -135,7 +142,6 @@ class BleForegroundService : Service() {
     }
 
     private fun updateStatus(status: String) {
-        // Note: we don't overwrite connectionStatus here because it's managed by the callbacks
         BleStatus.updateState(status)
         BleStatus.updateDeviceName(connectedDeviceName)
         
@@ -149,7 +155,6 @@ class BleForegroundService : Service() {
 
     private fun showDisconnectAlert() {
         handler.post {
-            // Vibrate
             val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 val vibratorManager = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
                 vibratorManager.defaultVibrator
@@ -165,7 +170,6 @@ class BleForegroundService : Service() {
                 vibrator.vibrate(1000)
             }
 
-            // Play Alert Sound
             try {
                 val notificationUri: Uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
                 val r = RingtoneManager.getRingtone(applicationContext, notificationUri)
@@ -200,17 +204,38 @@ class BleForegroundService : Service() {
     @SuppressLint("MissingPermission")
     private fun triggerEmergencyAction() {
         serviceScope.launch {
+            val locationUrl = locationHelper.getLastLocation()
+            val prefs = getSharedPreferences("emergency_prefs", MODE_PRIVATE)
+            val primaryNumber = prefs.getString("primary_number", "")
+            
             try {
                 withContext(Dispatchers.IO) {
                     val database = AppDatabase.getDatabase(applicationContext)
                     val contacts = database.contactDao().getAllContactsSync()
-                    val message = "EMERGENCY! I may be in danger. Please help immediately."
-                    contacts.forEach { contact ->
-                        smsHelper.sendSms(contact.phoneNumber, message)
+                    val message = "EMERGENCY! I may be in danger. Please help immediately.\n$locationUrl"
+                    
+                    val recipients = mutableSetOf<String>()
+                    
+                    // 1. Collect numbers from alert list
+                    contacts.forEach { recipients.add(it.phoneNumber) }
+                    
+                    // 2. Add primary number if not already represented in the list (using robust comparison)
+                    if (!primaryNumber.isNullOrBlank()) {
+                        val alreadyInList = contacts.any { 
+                            PhoneNumberUtils.compare(it.phoneNumber, primaryNumber)
+                        }
+                        if (!alreadyInList) {
+                            recipients.add(primaryNumber)
+                        }
+                    }
+                    
+                    // 3. Send SMS to the finalized list
+                    recipients.forEach { number ->
+                        smsHelper.sendSms(number, message)
+                        Log.d("BleService", "Sent emergency SMS to: $number")
                     }
                 }
-                // Back on Main thread
-                Toast.makeText(applicationContext, "SMS have been sent", Toast.LENGTH_LONG).show()
+                Toast.makeText(applicationContext, "Emergency SMS sent to all contacts", Toast.LENGTH_LONG).show()
             } catch (e: Exception) {
                 Log.e("BleService", "SMS failed: ${e.message}")
             }
@@ -256,9 +281,23 @@ class BleForegroundService : Service() {
         val intent = Intent(this, MainActivity::class.java)
         val pendingIntent = PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_IMMUTABLE)
 
+        val title = if (currentCountdown > 0) {
+            "EMERGENCY IN $currentCountdown SECONDS!"
+        } else if (currentCountdown == 0) {
+            "TRIGGERING EMERGENCY!"
+        } else {
+            "DamselV5 Protection: $status"
+        }
+
+        val contentText = if (currentCountdown >= 0) {
+            "Press button again to CANCEL"
+        } else {
+            "Connected to: $connectedDeviceName"
+        }
+
         val builder = Notification.Builder(this, channelId)
-            .setContentTitle("DamselV5 Protection: $status") 
-            .setContentText("Connected to: $connectedDeviceName") 
+            .setContentTitle(title) 
+            .setContentText(contentText) 
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -266,15 +305,11 @@ class BleForegroundService : Service() {
             .setContentIntent(pendingIntent)
 
         if (Build.VERSION.SDK_INT >= 36) {
-            val shortText = when(status) {
-                "Connected" -> "Live"
-                "Reconnecting..." -> "Lost"
-                else -> "Wait"
-            }
+            val shortText = if (currentCountdown >= 0) "$currentCountdown" else status.take(4)
             try {
                 val ongoingContentClass = Class.forName("android.app.Notification\$OngoingUpdateStyle\$OngoingContent")
                 val textContentClass = Class.forName("android.app.Notification\$OngoingUpdateStyle\$OngoingContent\$Text")
-                val textContent = textContentClass.getConstructor(CharSequence::class.java).newInstance(status)
+                val textContent = textContentClass.getConstructor(CharSequence::class.java).newInstance(title)
                 val styleBuilderClass = Class.forName("android.app.Notification\$OngoingUpdateStyle\$Builder")
                 val styleBuilder = styleBuilderClass.getConstructor(ongoingContentClass).newInstance(textContent)
                 styleBuilderClass.getMethod("setShortCriticalText", CharSequence::class.java).invoke(styleBuilder, shortText)
@@ -287,7 +322,9 @@ class BleForegroundService : Service() {
             }
         } else {
             builder.extras.putBoolean("android.requestPromotedOngoing", true)
-            builder.setSubText(status)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                builder.setSubText(if (currentCountdown >= 0) "EMERGENCY COUNTDOWN" else status)
+            }
         }
 
         val notification = builder.build()

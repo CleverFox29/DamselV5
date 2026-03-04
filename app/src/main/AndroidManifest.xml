@@ -8,9 +8,10 @@
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
-    <!-- Location (Required for BLE scan on older versions) -->
+    <!-- Location Permissions -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
 
     <!-- SMS Permission -->
     <uses-permission android:name="android.permission.SEND_SMS" />
@@ -21,6 +22,7 @@
     <!-- Foreground Service Permissions -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
 
     <!-- Notification Permissions -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -31,11 +33,8 @@
     <!-- Contacts Permission -->
     <uses-permission android:name="android.permission.READ_CONTACTS" />
 
-    <!-- Wake Lock Permission to keep CPU running during panic countdown -->
+    <!-- Wake Lock Permission -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-
-    <!-- Permission to ignore battery optimizations (for emergency apps) -->
-    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <!-- Vibration for alerts -->
     <uses-permission android:name="android.permission.VIBRATE" />
@@ -54,7 +53,7 @@
             android:name=".service.BleForegroundService"
             android:enabled="true"
             android:exported="false"
-            android:foregroundServiceType="connectedDevice" />
+            android:foregroundServiceType="connectedDevice|location" />
 
         <activity
             android:name=".MainActivity"

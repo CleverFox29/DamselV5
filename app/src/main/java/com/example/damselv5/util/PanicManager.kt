@@ -14,6 +14,7 @@ import android.widget.Toast
  */
 class PanicManager(
     private val context: Context,
+    private val onCountdownUpdate: (Int) -> Unit,
     private val onTriggerEmergency: () -> Unit
 ) {
 
@@ -28,10 +29,12 @@ class PanicManager(
             if (countdownValue > 0) {
                 showToast("EMERGENCY in $countdownValue seconds! Press again to CANCEL.")
                 vibrateShort()
+                onCountdownUpdate(countdownValue)
                 countdownValue--
                 handler.postDelayed(this, 1000)
             } else {
                 Log.d("PanicManager", "Countdown finished! Triggering emergency.")
+                onCountdownUpdate(0)
                 onTriggerEmergency()
                 isTimerRunning = false
             }
@@ -73,6 +76,7 @@ class PanicManager(
     private fun cancelPanicTimer() {
         handler.removeCallbacks(countdownRunnable)
         isTimerRunning = false
+        onCountdownUpdate(-1) // -1 signifies cancelled/reset
     }
 
     private fun showToast(message: String) {
