@@ -14,7 +14,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
-import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -24,7 +23,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
@@ -46,14 +44,10 @@ import com.example.damselv5.ui.ContactViewModel
 import com.example.damselv5.ui.theme.DamselV5Theme
 import kotlinx.coroutines.launch
 
-/**
- * Main Activity handling Contact Management, Emergency Number, and Connection Status.
- */
 class MainActivity : ComponentActivity() {
 
     private val viewModel: ContactViewModel by viewModels()
 
-    // Launcher to pick a contact for SMS list
     private val pickContactLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -75,7 +69,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // Launcher to pick primary emergency contact for calls
     private val pickPrimaryContactLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -93,7 +86,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // Launcher for READ_CONTACTS permission for SMS list
     private val requestContactsPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
@@ -104,7 +96,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // Launcher for READ_CONTACTS permission for Primary Number
     private val requestPrimaryContactsPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
@@ -112,6 +103,19 @@ class MainActivity : ComponentActivity() {
             openContactPicker(pickPrimaryContactLauncher)
         } else {
             Toast.makeText(this, "Contacts permission is required to select primary number", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private val requestPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { _ ->
+        val hasEmergency = hasEmergencyPermissions()
+        val hasBle = hasBlePermissions()
+        
+        if (!hasEmergency) {
+            Toast.makeText(this, "MANDATORY: SMS and Call permissions are required for safety.", Toast.LENGTH_LONG).show()
+        } else if (!hasBle) {
+            Log.w("Permissions", "Bluetooth/Location permissions not fully granted.")
         }
     }
 
@@ -145,7 +149,6 @@ class MainActivity : ComponentActivity() {
                                 action = BleForegroundService.ACTION_SIMULATE_PANIC
                             }
                             startService(intent)
-                            Toast.makeText(this, "Simulating Panic Signal...", Toast.LENGTH_SHORT).show()
                         } else {
                             requestInitialPermissions()
                         }
@@ -191,19 +194,6 @@ class MainActivity : ComponentActivity() {
         }
 
         requestPermissionLauncher.launch(permissions.toTypedArray())
-    }
-
-    private val requestPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { _ ->
-        val hasEmergency = hasEmergencyPermissions()
-        val hasBle = hasBlePermissions()
-        
-        if (!hasEmergency) {
-            Toast.makeText(this, "MANDATORY: SMS and Call permissions are required for safety.", Toast.LENGTH_LONG).show()
-        } else if (!hasBle) {
-            Log.w("Permissions", "Bluetooth/Location permissions not fully granted.")
-        }
     }
 
     private fun openContactPicker(launcher: androidx.activity.result.ActivityResultLauncher<Intent>) {
@@ -253,11 +243,12 @@ fun MainScreen(
     ) { padding ->
         Column(
             modifier = Modifier
-                .padding(padding)
-                .padding(16.dp)
                 .fillMaxSize()
+                .padding(padding)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Status Card
+            // 1. Status Card
             val statusBgColor = when(connectionState) {
                 "Connected" -> if (isDark) Color(0xFF1B5E20) else Color(0xFFE8F5E9)
                 "Reconnecting...", "Connecting..." -> if (isDark) Color(0xFFE65100) else Color(0xFFFFF3E0)
@@ -272,79 +263,62 @@ fun MainScreen(
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = statusBgColor,
-                    contentColor = statusTextColor
-                )
+                colors = CardDefaults.cardColors(containerColor = statusBgColor, contentColor = statusTextColor)
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("Protection Status", style = MaterialTheme.typography.labelLarge)
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = connectionState,
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Text(text = connectionState, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                     if (connectionState != "Disconnected") {
                         Text("Device: $deviceName", style = MaterialTheme.typography.bodyMedium)
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // BLE Control Buttons
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // 2. BLE Control Buttons (Connect/Disconnect)
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 val isServiceActive = connectionState != "Disconnected"
-                
                 Button(
                     onClick = onScanClick, 
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).height(50.dp),
                     enabled = !isServiceActive,
+                    shape = CircleShape,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary,
-                        disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                        disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        contentColor = MaterialTheme.colorScheme.onPrimary
                     )
                 ) {
-                    Text("Scan BLE")
+                    Text("Connect", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                 }
                 Button(
                     onClick = onDisconnectClick, 
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).height(50.dp),
                     enabled = isServiceActive,
+                    shape = CircleShape,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.error,
-                        contentColor = MaterialTheme.colorScheme.onError,
-                        disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                        disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        contentColor = MaterialTheme.colorScheme.onError
                     )
                 ) {
-                    Text("Disconnect")
+                    Text("Disconnect", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Simulated Panic Button
+            // 3. Panic Button
             Button(
                 onClick = onSimulatePanicClick,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().height(50.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isDark) Color(0xFFD32F2F) else Color(0xFFFF5252),
+                    containerColor = Color(0xFFD32F2F), // Distinct Red for Panic
                     contentColor = Color.White
                 ),
-                shape = RoundedCornerShape(12.dp)
+                shape = CircleShape
             ) {
-                Icon(Icons.Default.Warning, contentDescription = null)
+                Icon(Icons.Default.Warning, contentDescription = null, modifier = Modifier.size(24.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Simulate Panic (#)", fontWeight = FontWeight.Bold)
+                Text("PANIC BUTTON", fontSize = 16.sp, fontWeight = FontWeight.Black)
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Primary Emergency Number Section
+            // 4. Primary Emergency Number Section
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
@@ -354,8 +328,19 @@ fun MainScreen(
                 )
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Primary Emergency Number (Will be Called)", style = MaterialTheme.typography.titleMedium)
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Primary Emergency Number", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "Will be called", 
+                        style = MaterialTheme.typography.labelSmall, 
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                    )
+                    
+                    HorizontalDivider(
+                        modifier = Modifier.padding(vertical = 12.dp),
+                        thickness = 1.dp,
+                        color = if (isDark) Color.White.copy(alpha = 0.2f) else Color.Black.copy(alpha = 0.2f)
+                    )
+
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.fillMaxWidth()
@@ -369,7 +354,8 @@ fun MainScreen(
                             modifier = Modifier.weight(1f)
                         )
                         Button(
-                            onClick = onSelectPrimaryClick,
+                            onClick = onSelectPrimaryClick, 
+                            shape = CircleShape,
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = MaterialTheme.colorScheme.secondary,
                                 contentColor = MaterialTheme.colorScheme.onSecondary
@@ -381,62 +367,55 @@ fun MainScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Integrated Emergency Contacts Box (Header + Button + List)
+            // 5. Emergency Contacts List Card
             Card(
-                modifier = Modifier.fillMaxWidth().weight(1f),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
                 shape = RoundedCornerShape(12.dp),
                 colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically, 
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            "SMS Alert List", 
-                            style = MaterialTheme.typography.titleMedium, 
-                            modifier = Modifier.weight(1f)
-                        )
-                        // Person+ Icon Button
-                        IconButton(
-                            onClick = onImportClick,
-                            modifier = Modifier.size(48.dp),
-                            colors = IconButtonDefaults.iconButtonColors(
-                                containerColor = MaterialTheme.colorScheme.tertiary,
-                                contentColor = MaterialTheme.colorScheme.onTertiary
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("SMS Alert List", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                "Will be notified via SMS", 
+                                style = MaterialTheme.typography.labelSmall, 
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                            )
+                        }
+                        // Add icon in a tonal container
+                        FilledTonalIconButton(
+                            onClick = onImportClick, 
+                            modifier = Modifier.size(40.dp),
+                            shape = CircleShape,
+                            colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onTertiaryContainer
                             )
                         ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    Icons.Default.Person, 
-                                    contentDescription = "Import Contact",
-                                    modifier = Modifier.size(24.dp)
-                                )
-                                Box(
-                                    modifier = Modifier
-                                        .align(Alignment.TopEnd)
-                                        .offset(x = 4.dp, y = (-4).dp)
-                                        .size(16.dp)
-                                        .background(MaterialTheme.colorScheme.tertiary, CircleShape)
-                                        .background(MaterialTheme.colorScheme.onTertiary.copy(alpha = 0.2f), CircleShape),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text("+", color = MaterialTheme.colorScheme.onTertiary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
+                            Icon(
+                                Icons.Default.Add, 
+                                contentDescription = "Add Contact",
+                                modifier = Modifier.size(24.dp)
+                            )
                         }
                     }
 
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                    HorizontalDivider(
+                        modifier = Modifier.padding(vertical = 12.dp),
+                        thickness = 1.dp,
+                        color = if (isDark) Color.White.copy(alpha = 0.2f) else Color.Black.copy(alpha = 0.2f)
+                    )
 
                     if (contacts.isEmpty()) {
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             Text(
-                                "No contacts added. Tap the icon to import.", 
+                                "No contacts added. Tap icon to import.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                             )
@@ -449,11 +428,7 @@ fun MainScreen(
                                     supportingContent = { Text(contact.phoneNumber) },
                                     trailingContent = {
                                         IconButton(onClick = { viewModel.delete(contact) }) {
-                                            Icon(
-                                                Icons.Default.Delete, 
-                                                contentDescription = "Delete",
-                                                tint = MaterialTheme.colorScheme.error
-                                            )
+                                            Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error)
                                         }
                                     },
                                     colors = ListItemDefaults.colors(containerColor = Color.Transparent)

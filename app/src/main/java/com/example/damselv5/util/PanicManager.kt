@@ -3,6 +3,8 @@ package com.example.damselv5.util
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.util.Log
 import android.widget.Toast
 
@@ -25,6 +27,7 @@ class PanicManager(
         override fun run() {
             if (countdownValue > 0) {
                 showToast("EMERGENCY in $countdownValue seconds! Press again to CANCEL.")
+                vibrateShort()
                 countdownValue--
                 handler.postDelayed(this, 1000)
             } else {
@@ -77,6 +80,13 @@ class PanicManager(
             currentToast?.cancel()
             currentToast = Toast.makeText(context, message, Toast.LENGTH_SHORT)
             currentToast?.show()
+        }
+    }
+
+    private fun vibrateShort() {
+        val vibrator = context.getSystemService(Vibrator::class.java)
+        if (vibrator != null && vibrator.hasVibrator()) {
+            vibrator.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
         }
     }
 }

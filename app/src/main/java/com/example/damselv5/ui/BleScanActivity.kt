@@ -11,6 +11,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -67,44 +68,70 @@ fun ScanScreen(
         }
     }
 
+    // Automatically start scanning when the screen opens
+    LaunchedEffect(Unit) {
+        if (!isScanning) {
+            onStartScan(callback)
+            isScanning = true
+        }
+    }
+
     Scaffold(
-        topBar = { TopAppBar(title = { Text("Scan BLE Devices") }) }
-    ) { padding ->
-        Column(modifier = Modifier.padding(padding).padding(16.dp)) {
-            Button(
-                onClick = {
-                    if (!isScanning) {
-                        devices.clear()
-                        onStartScan(callback)
-                        isScanning = true
-                    } else {
-                        onStopScan(callback)
-                        isScanning = false
-                    }
-                },
-                modifier = Modifier.fillMaxWidth()
+        topBar = { TopAppBar(title = { Text("Scan BLE Devices") }) },
+        bottomBar = {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                tonalElevation = 3.dp
             ) {
-                Text(if (isScanning) "Stop Scan" else "Start Scan")
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            LazyColumn {
-                items(devices) { result ->
-                    @SuppressLint("MissingPermission")
-                    val name = result.device.name ?: "Unknown"
-                    val address = result.device.address
-                    
-                    ListItem(
-                        headlineContent = { Text(name) },
-                        supportingContent = { Text(address) },
-                        modifier = Modifier.clickable {
-                            onStopScan(callback)
-                            onDeviceSelected(address, name)
+                Column(
+                    modifier = Modifier
+                        .windowInsetsPadding(WindowInsets.navigationBars)
+                        .padding(horizontal = 16.dp, vertical = 24.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            if (!isScanning) {
+                                devices.clear()
+                                onStartScan(callback)
+                                isScanning = true
+                            } else {
+                                onStopScan(callback)
+                                isScanning = false
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth().height(50.dp),
+                        shape = CircleShape,
+                        colors = if (isScanning) {
+                            ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                        } else {
+                            ButtonDefaults.buttonColors()
                         }
-                    )
-                    HorizontalDivider()
+                    ) {
+                        Text(if (isScanning) "Stop Scan" else "Scan for nearby devices")
+                    }
                 }
+            }
+        }
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+        ) {
+            items(devices) { result ->
+                @SuppressLint("MissingPermission")
+                val name = result.device.name ?: "Unknown"
+                val address = result.device.address
+                
+                ListItem(
+                    headlineContent = { Text(name) },
+                    supportingContent = { Text(address) },
+                    modifier = Modifier.clickable {
+                        onStopScan(callback)
+                        onDeviceSelected(address, name)
+                    }
+                )
+                HorizontalDivider()
             }
         }
     }
