@@ -27,7 +27,7 @@ class BleManager(private val context: Context) {
 
     private val CLIENT_CHARACTERISTIC_CONFIG = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
-    var onConnectionStateChanged: ((Int) -> Unit)? = null
+    var onConnectionStateChanged: ((Int, Int) -> Unit)? = null
     var onDataReceived: ((String) -> Unit)? = null
 
     fun startScan(callback: ScanCallback) {
@@ -56,9 +56,9 @@ class BleManager(private val context: Context) {
 
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
-            Log.d("BleManager", "Connection State: $newState")
-            onConnectionStateChanged?.invoke(newState)
-            if (newState == BluetoothProfile.STATE_CONNECTED) {
+            Log.d("BleManager", "Connection State Change: status=$status, newState=$newState")
+            onConnectionStateChanged?.invoke(status, newState)
+            if (newState == BluetoothProfile.STATE_CONNECTED && status == BluetoothGatt.GATT_SUCCESS) {
                 gatt?.discoverServices()
             }
         }

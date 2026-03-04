@@ -2,11 +2,14 @@ package com.example.damselv5.service
 
 import android.annotation.SuppressLint
 import android.app.*
+import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothProfile
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.media.AudioAttributes
 import android.media.AudioManager
+import android.media.MediaPlayer
 import android.media.RingtoneManager
 import android.net.Uri
 import android.os.*
@@ -16,6 +19,7 @@ import android.util.Log
 import android.widget.Toast
 import androidx.core.content.edit
 import com.example.damselv5.MainActivity
+import com.example.damselv5.R
 import com.example.damselv5.ble.BleManager
 import com.example.damselv5.ble.BleStatus
 import com.example.damselv5.data.AppDatabase
@@ -32,21 +36,27 @@ class BleForegroundService : Service() {
     private lateinit var smsHelper: SmsHelper
     private lateinit var locationHelper: LocationHelper
     private lateinit var audioManager: AudioManager
+    private var mediaPlayer: MediaPlayer? = null
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     
     private var wakeLock: PowerManager.WakeLock? = null
     private val originalVolumes = mutableMapOf<Int, Int>()
-    private val streamsToMute = intArrayOf(
+    private val streamsToManage = intArrayOf(
         AudioManager.STREAM_RING,
         AudioManager.STREAM_NOTIFICATION,
         AudioManager.STREAM_MUSIC,
-        AudioManager.STREAM_SYSTEM
+        AudioManager.STREAM_SYSTEM,
+        AudioManager.STREAM_ALARM
     )
 
     private var connectedDeviceName: String = "None"
     private var connectedDeviceAddress: String? = null
     private var connectionStatus: String = "Disconnected"
     private var currentCountdown: Int = -1
+    
+    private var isStoppingIntentionally = false
+    private var connectionLostJob: Job? = null
+    private var hasStableConnectionEstablished = false
 
     private val handler = Handler(Looper.getMainLooper())
     private val reconnectRunnable = object : Runnable {
@@ -84,20 +94,32 @@ class BleForegroundService : Service() {
             }
         )
 
-        bleManager.onConnectionStateChanged = { newState ->
+        bleManager.onConnectionStateChanged = { status, newState ->
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
-                    val wasDisconnected = connectionStatus != "Connected"
-                    connectionStatus = "Connected"
-                    handler.removeCallbacks(reconnectRunnable)
-                    updateStatus("Connected")
-                    if (wasDisconnected) {
-                        Log.d("BleService", "Device Connected successfully.")
+                    if (status == BluetoothGatt.GATT_SUCCESS) {
+                        val wasDisconnected = connectionStatus != "Connected"
+                        connectionStatus = "Connected"
+                        if (wasDisconnected) {
+                            stopSiren()
+                            connectionLostJob?.cancel() // Prevents "Lost" SMS if recovered quickly
+                            if (hasStableConnectionEstablished) {
+                                sendReconnectedSms()
+                            }
+                            hasStableConnectionEstablished = true
+                            Log.d("BleService", "Device Connected successfully. Stable connection marked.")
+                        }
+                        handler.removeCallbacks(reconnectRunnable)
+                        updateStatus("Connected")
                     }
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
-                    if (connectionStatus == "Connected") {
-                        showDisconnectAlert()
+                    if (connectionStatus == "Connected" && !isStoppingIntentionally) {
+                        if (hasStableConnectionEstablished) {
+                            showDisconnectAlert()
+                            startSiren()
+                            connectionLostJob = sendConnectionLostSms()
+                        }
                     }
                     connectionStatus = "Disconnected"
                     updateStatus("Reconnecting...")
@@ -115,8 +137,74 @@ class BleForegroundService : Service() {
         }
     }
 
+    private fun startSiren() {
+        try {
+            maximizeAllVolumes()
+
+            if (mediaPlayer == null) {
+                mediaPlayer = MediaPlayer.create(this, R.raw.siren)?.apply {
+                    isLooping = true
+                    setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_ALARM)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                            .build()
+                    )
+                }
+            }
+            
+            mediaPlayer?.let { mp ->
+                if (!mp.isPlaying) {
+                    mp.start()
+                    Log.d("BleService", "Siren started.")
+                }
+            } ?: Log.e("BleService", "Failed to create MediaPlayer for siren.")
+            
+        } catch (e: Exception) {
+            Log.e("BleService", "Error starting siren: ${e.message}")
+        }
+    }
+
+    private fun stopSiren() {
+        try {
+            mediaPlayer?.let {
+                if (it.isPlaying) {
+                    it.stop()
+                }
+                it.release()
+                Log.d("BleService", "Siren stopped.")
+            }
+            restoreVolume()
+        } catch (e: Exception) {
+            Log.e("BleService", "Error stopping siren: ${e.message}")
+        } finally {
+            mediaPlayer = null
+        }
+    }
+
+    private fun maximizeAllVolumes() {
+        if (originalVolumes.isEmpty()) {
+            for (stream in streamsToManage) {
+                try {
+                    originalVolumes[stream] = audioManager.getStreamVolume(stream)
+                    val maxVol = audioManager.getStreamMaxVolume(stream)
+                    audioManager.setStreamVolume(stream, maxVol, 0)
+                } catch (e: Exception) {
+                    Log.e("BleService", "Could not maximize stream $stream: ${e.message}")
+                }
+            }
+            Log.d("BleService", "All volumes maximized for siren.")
+        }
+    }
+
     private fun muteDevice() {
         if (originalVolumes.isEmpty()) {
+            val streamsToMute = intArrayOf(
+                AudioManager.STREAM_RING,
+                AudioManager.STREAM_NOTIFICATION,
+                AudioManager.STREAM_MUSIC,
+                AudioManager.STREAM_SYSTEM
+            )
             for (stream in streamsToMute) {
                 try {
                     originalVolumes[stream] = audioManager.getStreamVolume(stream)
@@ -125,7 +213,7 @@ class BleForegroundService : Service() {
                     Log.e("BleService", "Could not mute stream $stream: ${e.message}")
                 }
             }
-            Log.d("BleService", "Device muted for emergency.")
+            Log.d("BleService", "Device muted for emergency countdown.")
         }
     }
 
@@ -143,17 +231,83 @@ class BleForegroundService : Service() {
         }
     }
 
+    private fun sendConnectionLostSms(): Job {
+        return serviceScope.launch {
+            val locationUrl = locationHelper.getLastLocation()
+            val message = "CRITICAL ALERT: Panic Button Connection LOST! Last known location:\n$locationUrl"
+            sendSmsToAllContacts(message)
+        }
+    }
+
+    private fun sendReconnectedSms() {
+        serviceScope.launch {
+            val message = "DamselV5: Device reconnected. Protection is active."
+            sendSmsToAllContacts(message)
+        }
+    }
+
+    private suspend fun sendSmsToAllContacts(message: String) {
+        withContext(Dispatchers.IO) {
+            try {
+                val database = AppDatabase.getDatabase(applicationContext)
+                val contacts = database.contactDao().getAllContactsSync()
+                val prefs = getSharedPreferences("emergency_prefs", MODE_PRIVATE)
+                val primaryNumber = prefs.getString("primary_number", "")
+                
+                val recipients = mutableSetOf<String>()
+                contacts.forEach { recipients.add(it.phoneNumber) }
+                
+                if (!primaryNumber.isNullOrBlank()) {
+                    val alreadyInList = contacts.any { 
+                        PhoneNumberUtils.compare(it.phoneNumber, primaryNumber)
+                    }
+                    if (!alreadyInList) {
+                        recipients.add(primaryNumber)
+                    }
+                }
+
+                recipients.forEach { number ->
+                    smsHelper.sendSms(number, message)
+                }
+                Log.d("BleService", "SMS notification sent to all recipients.")
+            } catch (e: Exception) {
+                Log.e("BleService", "Failed to send SMS notification: ${e.message}")
+            }
+        }
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val address = intent?.getStringExtra("DEVICE_ADDRESS")
         val name = intent?.getStringExtra("DEVICE_NAME")
 
         when (intent?.action) {
             ACTION_STOP_SERVICE -> {
-                getSharedPreferences("ble_prefs", MODE_PRIVATE).edit { clear() }
-                releaseWakeLock()
-                restoreVolume()
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
+                Log.d("BleService", "ACTION_STOP_SERVICE received. Status: $connectionStatus")
+                isStoppingIntentionally = true
+                
+                // Use a separate background thread for SMS to avoid blocking/crashing during stopSelf
+                Thread {
+                    if (connectionStatus != "Connected" && hasStableConnectionEstablished) {
+                        Log.d("BleService", "Sending intentional disconnect SMS...")
+                        runBlocking {
+                            connectionLostJob?.join()
+                            sendSmsToAllContacts("Device was disconnected by the user while the app was trying to restore connection to BLE device.")
+                        }
+                    }
+                    
+                    // Final cleanup from background thread
+                    handler.post {
+                        handler.removeCallbacks(reconnectRunnable)
+                        stopSiren()
+                        restoreVolume()
+                        releaseWakeLock()
+                        
+                        getSharedPreferences("ble_prefs", MODE_PRIVATE).edit { clear() }
+                        stopForeground(STOP_FOREGROUND_REMOVE)
+                        stopSelf()
+                    }
+                }.start()
+                
                 return START_NOT_STICKY
             }
             ACTION_SIMULATE_PANIC -> {
@@ -165,6 +319,8 @@ class BleForegroundService : Service() {
         }
 
         if (address != null) {
+            isStoppingIntentionally = false
+            hasStableConnectionEstablished = false // Reset for new device connection
             getSharedPreferences("ble_prefs", MODE_PRIVATE).edit {
                 putString("last_address", address)
                 putString("last_name", name)
@@ -178,11 +334,14 @@ class BleForegroundService : Service() {
             val prefs = getSharedPreferences("ble_prefs", MODE_PRIVATE)
             val savedAddress = prefs.getString("last_address", null)
             if (savedAddress != null) {
+                isStoppingIntentionally = false
                 connectedDeviceAddress = savedAddress
                 connectedDeviceName = prefs.getString("last_name", "Unknown") ?: "Unknown"
-                connectionStatus = "Disconnected"
-                updateStatus("Reconnecting...")
-                bleManager.connect(savedAddress)
+                if (connectionStatus != "Connected") {
+                    connectionStatus = "Disconnected"
+                    updateStatus("Reconnecting...")
+                    bleManager.connect(savedAddress)
+                }
             }
         }
 
@@ -192,7 +351,7 @@ class BleForegroundService : Service() {
     private fun updateStatus(status: String) {
         BleStatus.updateState(status)
         BleStatus.updateDeviceName(connectedDeviceName)
-        
+
         val notification = createLiveNotification(status)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
@@ -225,7 +384,7 @@ class BleForegroundService : Service() {
             } catch (e: Exception) {
                 Log.e("BleService", "Sound alert failed: ${e.message}")
             }
-            
+
             Toast.makeText(this, "CRITICAL: Panic Button Disconnected!", Toast.LENGTH_LONG).show()
         }
     }
@@ -383,10 +542,12 @@ class BleForegroundService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        serviceScope.cancel()
         bleManager.disconnect()
         handler.removeCallbacks(reconnectRunnable)
         releaseWakeLock()
         restoreVolume()
+        stopSiren()
         BleStatus.updateState("Disconnected")
     }
 

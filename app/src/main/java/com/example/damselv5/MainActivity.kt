@@ -153,7 +153,8 @@ class MainActivity : ComponentActivity() {
                         val intent = Intent(this, BleForegroundService::class.java).apply {
                             action = BleForegroundService.ACTION_STOP_SERVICE
                         }
-                        stopService(intent)
+                        // Use startService instead of startForegroundService for commands to an already running service
+                        startService(intent)
                         Toast.makeText(this, "Protection Stopped", Toast.LENGTH_SHORT).show()
                     },
                     onImportClick = {
@@ -171,6 +172,16 @@ class MainActivity : ComponentActivity() {
                     },
                     onSelectPrimaryClick = {
                         requestPrimaryContactsPermissionLauncher.launch(Manifest.permission.READ_CONTACTS)
+                    },
+                    onRemovePrimaryClick = {
+                        val prefs = getSharedPreferences("emergency_prefs", Context.MODE_PRIVATE)
+                        prefs.edit().apply {
+                            remove("primary_name")
+                            remove("primary_number")
+                            commit()
+                        }
+                        Toast.makeText(this, "Primary Contact Removed", Toast.LENGTH_SHORT).show()
+                        recreate()
                     }
                 )
             }
@@ -276,7 +287,8 @@ fun MainScreen(
     onDisconnectClick: () -> Unit,
     onImportClick: () -> Unit,
     onSimulatePanicClick: () -> Unit,
-    onSelectPrimaryClick: () -> Unit
+    onSelectPrimaryClick: () -> Unit,
+    onRemovePrimaryClick: () -> Unit
 ) {
     val context = LocalContext.current
     val contacts by viewModel.allContacts.observeAsState(emptyList())
@@ -288,6 +300,7 @@ fun MainScreen(
     val prefs = context.getSharedPreferences("emergency_prefs", Context.MODE_PRIVATE)
     val emergencyName = prefs.getString("primary_name", "Not Set") ?: "Not Set"
     val emergencyNumber = prefs.getString("primary_number", "Not Set") ?: "Not Set"
+    val hasPrimary = emergencyNumber != "Not Set"
 
     // Theme Customization
     val backgroundColor = if (isDark) Color(0xFF000000) else Color(0xFFFFFFFF)
@@ -401,7 +414,7 @@ fun MainScreen(
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Text("Primary Emergency Number", style = MaterialTheme.typography.titleMedium)
-                        Text("Will be called", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+                        Text("Will be called and notified via SMS", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
                         
                         HorizontalDivider(
                             modifier = Modifier.padding(vertical = 12.dp),
@@ -416,22 +429,41 @@ fun MainScreen(
                                 Text(
                                     text = emergencyName,
                                     style = MaterialTheme.typography.bodyLarge,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.Bold,
+                                    lineHeight = 18.sp // Reduced line spacing for the name
                                 )
                                 Text(
                                     text = emergencyNumber,
-                                    style = MaterialTheme.typography.bodySmall
+                                    style = MaterialTheme.typography.bodyMedium // Set to bodyMedium to match ListItem supporting content
                                 )
                             }
-                            Button(
-                                onClick = onSelectPrimaryClick, 
-                                shape = CircleShape,
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                                )
-                            ) {
-                                Text("Select")
+                            
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(
+                                    onClick = onSelectPrimaryClick, 
+                                    modifier = Modifier.height(40.dp),
+                                    shape = CircleShape,
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                                    ),
+                                    contentPadding = PaddingValues(horizontal = 16.dp)
+                                ) {
+                                    Text(if (hasPrimary) "Change" else "Select")
+                                }
+                                if (hasPrimary) {
+                                    FilledTonalIconButton(
+                                        onClick = onRemovePrimaryClick,
+                                        modifier = Modifier.size(40.dp),
+                                        shape = CircleShape,
+                                        colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                            containerColor = MaterialTheme.colorScheme.errorContainer,
+                                            contentColor = MaterialTheme.colorScheme.onErrorContainer
+                                        )
+                                    ) {
+                                        Icon(Icons.Default.Delete, contentDescription = "Remove Primary", modifier = Modifier.size(20.dp))
+                                    }
+                                }
                             }
                         }
                     }
@@ -446,62 +478,81 @@ fun MainScreen(
                         contentColor = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("SMS Alert List", style = MaterialTheme.typography.titleMedium)
-                                Text("Will be notified via SMS", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        // Header with internal padding
+                        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("SMS Alert List", style = MaterialTheme.typography.titleMedium)
+                                    Text("Will be notified via SMS", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+                                }
+                                FilledTonalIconButton(
+                                    onClick = onImportClick, 
+                                    modifier = Modifier.size(40.dp),
+                                    shape = CircleShape
+                                ) {
+                                    Icon(Icons.Default.Add, contentDescription = "Add Contact", modifier = Modifier.size(24.dp))
+                                }
                             }
-                            FilledTonalIconButton(
-                                onClick = onImportClick, 
-                                modifier = Modifier.size(40.dp),
-                                shape = CircleShape
-                            ) {
-                                Icon(Icons.Default.Add, contentDescription = "Add Contact", modifier = Modifier.size(24.dp))
-                            }
+
+                            HorizontalDivider(
+                                modifier = Modifier.padding(top = 12.dp),
+                                thickness = 1.dp,
+                                color = if (isDark) Color.White.copy(0.1f) else Color.Black.copy(0.05f)
+                            )
                         }
 
-                        HorizontalDivider(
-                            modifier = Modifier.padding(vertical = 12.dp),
-                            thickness = 1.dp,
-                            color = if (isDark) Color.White.copy(0.1f) else Color.Black.copy(0.05f)
-                        )
-
                         if (contacts.isEmpty()) {
-                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Box(modifier = Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
                                 Text("No contacts added.", style = MaterialTheme.typography.bodyMedium)
                             }
                         } else {
-                            LazyColumn(modifier = Modifier.fillMaxSize()) {
+                            LazyColumn(
+                                modifier = Modifier.fillMaxSize(),
+                                contentPadding = PaddingValues(bottom = 8.dp)
+                            ) {
                                 items(contacts) { contact ->
-                                    ListItem(
-                                        headlineContent = { Text(contact.name, fontWeight = FontWeight.SemiBold) },
-                                        supportingContent = { Text(contact.phoneNumber) },
-                                        leadingContent = {
-                                            Icon(
-                                                Icons.Default.Email,
-                                                contentDescription = null,
-                                                tint = MaterialTheme.colorScheme.primary,
-                                                modifier = Modifier.size(20.dp)
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 16.dp, vertical = 8.dp), // Increased from 4.dp to 8.dp
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Email,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(12.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = contact.name,
+                                                style = MaterialTheme.typography.bodyLarge,
+                                                fontWeight = FontWeight.SemiBold,
+                                                lineHeight = 18.sp
                                             )
-                                        },
-                                        trailingContent = {
-                                            IconButton(
-                                                onClick = { viewModel.delete(contact) },
-                                                colors = IconButtonDefaults.iconButtonColors(
-                                                    containerColor = MaterialTheme.colorScheme.errorContainer,
-                                                    contentColor = MaterialTheme.colorScheme.onErrorContainer
-                                                )
-                                            ) {
-                                                Icon(
-                                                    Icons.Default.Delete, 
-                                                    contentDescription = "Delete", 
-                                                    modifier = Modifier.size(20.dp)
-                                                )
-                                            }
-                                        },
-                                        colors = ListItemDefaults.colors(containerColor = Color.Transparent)
-                                    )
+                                            Text(
+                                                text = contact.phoneNumber,
+                                                style = MaterialTheme.typography.bodyMedium
+                                            )
+                                        }
+                                        FilledTonalIconButton(
+                                            onClick = { viewModel.delete(contact) },
+                                            modifier = Modifier.size(36.dp),
+                                            shape = CircleShape,
+                                            colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                                containerColor = MaterialTheme.colorScheme.errorContainer,
+                                                contentColor = MaterialTheme.colorScheme.onErrorContainer
+                                            )
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Delete, 
+                                                contentDescription = "Delete", 
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }

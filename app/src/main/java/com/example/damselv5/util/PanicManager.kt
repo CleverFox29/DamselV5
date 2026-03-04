@@ -9,7 +9,7 @@ import android.util.Log
 import android.widget.Toast
 
 /**
- * Handles the 10-second panic timer logic with countdown toasts.
+ * Handles the panic timer logic with countdown toasts.
  * Includes a small debounce to prevent accidental double-triggers.
  */
 class PanicManager(
@@ -20,7 +20,7 @@ class PanicManager(
 
     private val handler = Handler(Looper.getMainLooper())
     private var isTimerRunning = false
-    private var countdownValue = 10
+    private var countdownValue = 4
     private var currentToast: Toast? = null
     private var lastSignalTime: Long = 0
 
@@ -55,12 +55,12 @@ class PanicManager(
 
         handler.post {
             if (isTimerRunning) {
-                // Second signal received within 10s -> Cancel
+                // Second signal received within the countdown -> Cancel
                 cancelPanicTimer()
                 showToast("Panic Alert CANCELED.")
                 Log.d("PanicManager", "Panic Alert Canceled.")
             } else {
-                // First signal received -> Start 10s countdown
+                // First signal received -> Start countdown
                 startPanicTimer()
                 Log.d("PanicManager", "Panic Signal Received. Starting countdown.")
             }
@@ -69,7 +69,7 @@ class PanicManager(
 
     private fun startPanicTimer() {
         isTimerRunning = true
-        countdownValue = 10
+        countdownValue = 4
         handler.post(countdownRunnable)
     }
 
