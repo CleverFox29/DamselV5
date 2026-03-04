@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.ContactsContract
+import android.provider.Settings
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -106,16 +107,24 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private val requestBackgroundLocationLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (!isGranted) {
+            Toast.makeText(this, "BACKGROUND LOCATION: Please select 'Allow all the time' in settings for safety when screen is off.", Toast.LENGTH_LONG).show()
+        } else {
+            checkAndRequestOverlayPermission()
+        }
+    }
+
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { _ ->
-        val hasEmergency = hasEmergencyPermissions()
-        val hasBle = hasBlePermissions()
-        
-        if (!hasEmergency) {
-            Toast.makeText(this, "MANDATORY: SMS and Call permissions are required for safety.", Toast.LENGTH_LONG).show()
-        } else if (!hasBle) {
-            Log.w("Permissions", "Bluetooth/Location permissions not fully granted.")
+    ) { permissions ->
+        val allGranted = permissions.entries.all { it.value }
+        if (allGranted) {
+            checkAndRequestBackgroundLocation()
+        } else {
+            Toast.makeText(this, "Safety features require SMS, Call, and Location permissions.", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -173,15 +182,23 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun hasEmergencyPermissions(): Boolean {
-        return ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) == android.content.pm.PackageManager.PERMISSION_GRANTED &&
-               ContextCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        val hasSms = ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        val hasCall = ContextCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        val hasFine = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        val hasBackground = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_BACKGROUND_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        } else true
+        val hasOverlay = Settings.canDrawOverlays(this)
+        
+        return hasSms && hasCall && hasFine && hasBackground && hasOverlay
     }
 
     private fun requestInitialPermissions() {
         val permissions = mutableListOf(
             Manifest.permission.SEND_SMS,
             Manifest.permission.CALL_PHONE,
-            Manifest.permission.ACCESS_FINE_LOCATION
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
         )
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -194,6 +211,30 @@ class MainActivity : ComponentActivity() {
         }
 
         requestPermissionLauncher.launch(permissions.toTypedArray())
+    }
+
+    private fun checkAndRequestBackgroundLocation() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val hasBackground = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_BACKGROUND_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            if (!hasBackground) {
+                requestBackgroundLocationLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+            } else {
+                checkAndRequestOverlayPermission()
+            }
+        } else {
+            checkAndRequestOverlayPermission()
+        }
+    }
+
+    private fun checkAndRequestOverlayPermission() {
+        if (!Settings.canDrawOverlays(this)) {
+            Toast.makeText(this, "PLEASE ENABLE: 'Display over other apps' so calls work when screen is off.", Toast.LENGTH_LONG).show()
+            val intent = Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:$packageName")
+            )
+            startActivity(intent)
+        }
     }
 
     private fun openContactPicker(launcher: androidx.activity.result.ActivityResultLauncher<Intent>) {

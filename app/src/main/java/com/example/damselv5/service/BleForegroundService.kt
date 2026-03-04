@@ -18,6 +18,7 @@ import com.example.damselv5.MainActivity
 import com.example.damselv5.ble.BleManager
 import com.example.damselv5.ble.BleStatus
 import com.example.damselv5.data.AppDatabase
+import com.example.damselv5.ui.EmergencyCallActivity
 import com.example.damselv5.util.LocationHelper
 import com.example.damselv5.util.PanicManager
 import com.example.damselv5.util.SmsHelper
@@ -147,7 +148,7 @@ class BleForegroundService : Service() {
         
         val notification = createLiveNotification(status)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
+            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
@@ -189,7 +190,7 @@ class BleForegroundService : Service() {
             wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "DamselV5::PanicWakeLock")
         }
         if (wakeLock?.isHeld == false) {
-            wakeLock?.acquire(15000) 
+            wakeLock?.acquire(30000) // Increased to 30s for reliability
             Log.d("BleService", "WakeLock acquired.")
         }
     }
@@ -203,6 +204,10 @@ class BleForegroundService : Service() {
 
     @SuppressLint("MissingPermission")
     private fun triggerEmergencyAction() {
+        // 1. Immediately trigger the call in parallel to SMS
+        initiateEmergencyCall()
+
+        // 2. Launch SMS sequence in background
         serviceScope.launch {
             val locationUrl = locationHelper.getLastLocation()
             val prefs = getSharedPreferences("emergency_prefs", MODE_PRIVATE)
@@ -215,11 +220,8 @@ class BleForegroundService : Service() {
                     val message = "EMERGENCY! I may be in danger. Please help immediately.\n$locationUrl"
                     
                     val recipients = mutableSetOf<String>()
-                    
-                    // 1. Collect numbers from alert list
                     contacts.forEach { recipients.add(it.phoneNumber) }
                     
-                    // 2. Add primary number if not already represented in the list (using robust comparison)
                     if (!primaryNumber.isNullOrBlank()) {
                         val alreadyInList = contacts.any { 
                             PhoneNumberUtils.compare(it.phoneNumber, primaryNumber)
@@ -229,20 +231,18 @@ class BleForegroundService : Service() {
                         }
                     }
                     
-                    // 3. Send SMS to the finalized list
                     recipients.forEach { number ->
                         smsHelper.sendSms(number, message)
-                        Log.d("BleService", "Sent emergency SMS to: $number")
                     }
                 }
-                Toast.makeText(applicationContext, "Emergency SMS sent to all contacts", Toast.LENGTH_LONG).show()
             } catch (e: Exception) {
-                Log.e("BleService", "SMS failed: ${e.message}")
+                Log.e("BleService", "Emergency SMS failed: ${e.message}")
+            } finally {
+                currentCountdown = -1
+                updateStatus(connectionStatus)
+                handler.postDelayed({ releaseWakeLock() }, 5000)
             }
         }
-
-        initiateEmergencyCall()
-        handler.postDelayed({ releaseWakeLock() }, 2000)
     }
 
     @SuppressLint("MissingPermission")
@@ -251,19 +251,19 @@ class BleForegroundService : Service() {
         val primaryNumber = prefs.getString("primary_number", "")
         
         if (!primaryNumber.isNullOrBlank()) {
+            Log.d("BleService", "Triggering Emergency Call Activity for $primaryNumber")
+            val callIntent = Intent(this, EmergencyCallActivity::class.java).apply {
+                putExtra("PHONE_NUMBER", primaryNumber)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_ACTIVITY_NO_USER_ACTION)
+                addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+            }
+            
+            // On newer Android, starting activity from background requires a high-priority context
             try {
-                val callIntent = Intent(Intent.ACTION_CALL).apply {
-                    data = Uri.parse("tel:$primaryNumber")
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                }
-                val telecomManager = getSystemService(Context.TELECOM_SERVICE) as TelecomManager
-                val defaultDialer = telecomManager.defaultDialerPackage
-                if (defaultDialer != null) {
-                    callIntent.setPackage(defaultDialer)
-                }
                 startActivity(callIntent)
             } catch (e: Exception) {
-                Log.e("BleService", "Call failed: ${e.message}")
+                Log.e("BleService", "Direct Activity start failed, relying on FullScreenIntent: ${e.message}")
             }
         }
     }
@@ -273,7 +273,10 @@ class BleForegroundService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val manager = getSystemService(NotificationManager::class.java)
             if (manager.getNotificationChannel(channelId) == null) {
-                val channel = NotificationChannel(channelId, "DamselV5 Protection", NotificationManager.IMPORTANCE_HIGH)
+                val channel = NotificationChannel(channelId, "DamselV5 Protection", NotificationManager.IMPORTANCE_HIGH).apply {
+                    setSound(null, null)
+                    enableVibration(false)
+                }
                 manager.createNotificationChannel(channel)
             }
         }
@@ -281,28 +284,29 @@ class BleForegroundService : Service() {
         val intent = Intent(this, MainActivity::class.java)
         val pendingIntent = PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_IMMUTABLE)
 
-        val title = if (currentCountdown > 0) {
-            "EMERGENCY IN $currentCountdown SECONDS!"
-        } else if (currentCountdown == 0) {
-            "TRIGGERING EMERGENCY!"
-        } else {
-            "DamselV5 Protection: $status"
-        }
-
-        val contentText = if (currentCountdown >= 0) {
-            "Press button again to CANCEL"
-        } else {
-            "Connected to: $connectedDeviceName"
-        }
+        val title = if (currentCountdown > 0) "EMERGENCY IN $currentCountdown SECONDS!" 
+                    else if (currentCountdown == 0) "CALLING PRIMARY CONTACT..."
+                    else "DamselV5 Protection: $status"
 
         val builder = Notification.Builder(this, channelId)
-            .setContentTitle(title) 
-            .setContentText(contentText) 
+            .setContentTitle(title)
+            .setContentText(if (currentCountdown >= 0) "Press button again to CANCEL" else "Connected to: $connectedDeviceName")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .setShowWhen(false)
+            .setCategory(if (currentCountdown >= 0) Notification.CATEGORY_CALL else Notification.CATEGORY_SERVICE)
+            .setPriority(if (currentCountdown >= 0) Notification.PRIORITY_MAX else Notification.PRIORITY_DEFAULT)
             .setContentIntent(pendingIntent)
+
+        // Full Screen Intent is key for background breakthrough
+        if (currentCountdown >= 0) {
+            val prefs = getSharedPreferences("emergency_prefs", MODE_PRIVATE)
+            val callIntent = Intent(this, EmergencyCallActivity::class.java).apply {
+                putExtra("PHONE_NUMBER", prefs.getString("primary_number", ""))
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            val fullScreenPendingIntent = PendingIntent.getActivity(this, 1, callIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            builder.setFullScreenIntent(fullScreenPendingIntent, true)
+        }
 
         if (Build.VERSION.SDK_INT >= 36) {
             val shortText = if (currentCountdown >= 0) "$currentCountdown" else status.take(4)
@@ -318,18 +322,15 @@ class BleForegroundService : Service() {
                 Notification.Builder::class.java.getMethod("setRequestPromotedOngoing", Boolean::class.javaPrimitiveType).invoke(builder, true)
             } catch (e: Exception) {
                 builder.extras.putBoolean("android.requestPromotedOngoing", true)
-                builder.extras.putCharSequence("android.shortCriticalText", shortText)
             }
         } else {
             builder.extras.putBoolean("android.requestPromotedOngoing", true)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                builder.setSubText(if (currentCountdown >= 0) "EMERGENCY COUNTDOWN" else status)
+                builder.setSubText(if (currentCountdown >= 0) "EMERGENCY" else status)
             }
         }
 
-        val notification = builder.build()
-        notification.flags = notification.flags or Notification.FLAG_ONGOING_EVENT or Notification.FLAG_NO_CLEAR
-        return notification
+        return builder.build()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
