@@ -5,11 +5,12 @@ DamselV5 is a robust Android safety application designed to provide immediate as
 ## 🚀 Key Features
 
 - **BLE Integration**: Seamlessly connect to hardware panic buttons to trigger alerts even when your phone is in your pocket.
-- **10-Second Panic Timer**: A managed countdown that allows for accidental trigger cancellation directly from the app or notification bar.
+- **Immediate Disconnect Alarm**: If Bluetooth is turned off while the device is connected, the app immediately switches to reconnecting mode and sounds a high-volume alarm (siren) to alert you.
+- **4-Second Panic Timer**: A managed countdown that allows for accidental trigger cancellation directly from the app or notification bar. Double-press the hardware button to cancel.
 - **Smart SMS Alerts**: Automatically sends emergency messages to a customizable list of contacts.
 - **Real-Time Location Sharing**: SMS alerts include a high-accuracy Google Maps link. The app uses a "Fresh-First" strategy with a 5-second timeout and instant fallback to the last known location for maximum reliability.
 - **Automatic Emergency Calling**: Initiates a direct phone call to your primary emergency contact immediately after sending SMS alerts.
-- **Stealth Mode**: Automatically mutes all device volumes (Ringer, Media, Notifications) upon trigger to avoid attracting unwanted attention.
+- **Stealth Mode & Siren**: Automatically mutes device volumes during the 4-second countdown to avoid attention, then maximizes volume to sound a siren if the connection is lost unexpectedly.
 - **Live Notifications**: Features a real-time countdown in the notification bar, utilizing modern Android 16+ "Promoted Ongoing" update styles for high visibility.
 - **Background Reliability**: Optimized with Foreground Services, WakeLocks, and specific permission handling to ensure it works even when the screen is off or the device is locked.
 

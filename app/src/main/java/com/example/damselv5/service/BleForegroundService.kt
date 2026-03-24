@@ -2,10 +2,13 @@ package com.example.damselv5.service
 
 import android.annotation.SuppressLint
 import android.app.*
+import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothProfile
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.media.AudioAttributes
 import android.media.AudioManager
@@ -66,6 +69,37 @@ class BleForegroundService : Service() {
                 updateStatus("Reconnecting...")
                 bleManager.connect(connectedDeviceAddress!!)
                 handler.postDelayed(this, 5000)
+            }
+        }
+    }
+
+    private val bluetoothStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (BluetoothAdapter.ACTION_STATE_CHANGED == intent.action) {
+                val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)
+                when (state) {
+                    BluetoothAdapter.STATE_OFF -> {
+                        if (connectionStatus == "Connected" && !isStoppingIntentionally) {
+                            Log.d("BleService", "Bluetooth turned OFF while connected. Status will update via GATT callback if possible, but forced here.")
+                            // We don't call startSiren() here because Bluetooth turning off 
+                            // will trigger BluetoothProfile.STATE_DISCONNECTED in the gattCallback,
+                            // which already handles showDisconnectAlert(), startSiren(), and SMS.
+                            // Adding it here causes a "double alarm".
+
+                            connectionStatus = "Disconnected"
+                            updateStatus("Reconnecting...")
+                            handler.removeCallbacks(reconnectRunnable)
+                            handler.postDelayed(reconnectRunnable, 2000)
+                        }
+                    }
+                    BluetoothAdapter.STATE_ON -> {
+                        if (connectedDeviceAddress != null && connectionStatus != "Connected") {
+                            Log.d("BleService", "Bluetooth turned ON. Retrying connection immediately.")
+                            handler.removeCallbacks(reconnectRunnable)
+                            handler.post(reconnectRunnable)
+                        }
+                    }
+                }
             }
         }
     }
@@ -135,6 +169,8 @@ class BleForegroundService : Service() {
                 panicManager.handlePanicSignal()
             }
         }
+
+        registerReceiver(bluetoothStateReceiver, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED))
     }
 
     private fun startSiren() {
@@ -542,6 +578,7 @@ class BleForegroundService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        unregisterReceiver(bluetoothStateReceiver)
         serviceScope.cancel()
         bleManager.disconnect()
         handler.removeCallbacks(reconnectRunnable)

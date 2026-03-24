@@ -1,6 +1,8 @@
 package com.example.damselv5
 
 import android.Manifest
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.content.Intent
 import android.database.Cursor
@@ -143,10 +145,14 @@ class MainActivity : ComponentActivity() {
                 MainScreen(
                     viewModel = viewModel,
                     onScanClick = {
-                        if (hasBlePermissions()) {
-                            startActivity(Intent(this, BleScanActivity::class.java))
+                        if (isBluetoothEnabled()) {
+                            if (hasBlePermissions()) {
+                                startActivity(Intent(this, BleScanActivity::class.java))
+                            } else {
+                                requestInitialPermissions()
+                            }
                         } else {
-                            requestInitialPermissions()
+                            Toast.makeText(this, "Please turn on Bluetooth to scan for devices.", Toast.LENGTH_SHORT).show()
                         }
                     },
                     onDisconnectClick = {
@@ -188,6 +194,11 @@ class MainActivity : ComponentActivity() {
         }
         
         requestInitialPermissions()
+    }
+
+    private fun isBluetoothEnabled(): Boolean {
+        val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+        return bluetoothManager.adapter?.isEnabled == true
     }
 
     private fun hasBlePermissions(): Boolean {
