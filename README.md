@@ -43,7 +43,7 @@ To ensure reliability in life-critical situations, the app requires the followin
 
 1. Clone the repository.
 2. Sync the project with Gradle.
-3. Build and deploy to an Android device (API 26+).
+3. Build and deploy to an Android device (API 36+).
 4. Follow the in-app prompts to grant necessary safety permissions.
 5. Set a primary emergency contact and add numbers to your SMS alert list.
 
