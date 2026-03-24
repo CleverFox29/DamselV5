@@ -2,7 +2,7 @@
 
 DamselV5 is a robust Android safety application designed to provide immediate assistance during emergencies. It integrates with external BLE (Bluetooth Low Energy) devices to act as a silent trigger for a multi-stage emergency response sequence.
 
-## 🚀 Key Features
+## Key Features
 
 - **BLE Integration**: Seamlessly connect to hardware panic buttons to trigger alerts even when your phone is in your pocket.
 - **Immediate Disconnect Alarm**: If Bluetooth is turned off while the device is connected, the app immediately switches to reconnecting mode and sounds a high-volume alarm (siren) to alert you.
@@ -14,7 +14,7 @@ DamselV5 is a robust Android safety application designed to provide immediate as
 - **Live Notifications**: Features a real-time countdown in the notification bar, utilizing modern Android 16+ "Promoted Ongoing" update styles for high visibility.
 - **Background Reliability**: Optimized with Foreground Services, WakeLocks, and specific permission handling to ensure it works even when the screen is off or the device is locked.
 
-## 🎨 Design
+## Design
 
 - **Material 3 UI**: A modern, clean interface following the latest Google design standards.
 - **Adaptive Theming**: 
@@ -22,7 +22,7 @@ DamselV5 is a robust Android safety application designed to provide immediate as
   - **Dark Mode**: True OLED black background for battery saving and low-light discretion.
 - **Dynamic Feedback**: Haptic vibration feedback for every second of the countdown and visual sync between the app UI and background service.
 
-## 🛠 Tech Stack
+## Tech Stack
 
 - **Language**: Kotlin
 - **UI Framework**: Jetpack Compose (Material 3)
@@ -31,7 +31,7 @@ DamselV5 is a robust Android safety application designed to provide immediate as
 - **Location**: Google Play Services Location (FusedLocationProvider)
 - **Bluetooth**: Android BLE API
 
-## 📋 Requirements & Permissions
+## Requirements & Permissions
 
 To ensure reliability in life-critical situations, the app requires the following:
 - **Location**: Set to "Allow all the time" (required for screen-off location tracking).
@@ -39,7 +39,7 @@ To ensure reliability in life-critical situations, the app requires the followin
 - **SMS & Call**: Necessary to contact your emergency circle.
 - **Bluetooth**: To maintain connection with your panic button hardware.
 
-## 🏗 Setup & Installation
+## Setup & Installation
 
 1. Clone the repository.
 2. Sync the project with Gradle.
