@@ -9,7 +9,8 @@ import androidx.room.PrimaryKey
     indices = [Index(value = ["phoneNumber"], unique = true)]
 )
 data class ContactEntity(
-    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    @PrimaryKey(autoGenerate = true) 
+    val id: Int = 0,
     val name: String,
     val phoneNumber: String
 )

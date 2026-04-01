@@ -20,66 +20,87 @@ import com.example.damselv5.ble.BleManager
 import com.example.damselv5.service.BleForegroundService
 import com.example.damselv5.ui.theme.DamselV5Theme
 
+
 @SuppressLint("MissingPermission")
 class BleScanActivity : ComponentActivity() {
 
-    private lateinit var bleManager: BleManager
+    private lateinit var bM: BleManager
 
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        bleManager = BleManager(this)
+
+    override fun onCreate(sI: Bundle?) {
+        super.onCreate(sI)
+        bM = BleManager(this)
 
         setContent {
             DamselV5Theme {
                 ScanScreen(
-                    onDeviceSelected = { deviceAddress, deviceName ->
-                        val intent = Intent(this, BleForegroundService::class.java).apply {
-                            putExtra("DEVICE_ADDRESS", deviceAddress)
-                            putExtra("DEVICE_NAME", deviceName)
+                    oDS = { a, n ->
+                        val i = Intent(this, BleForegroundService::class.java).apply {
+                            putExtra("DEVICE_ADDRESS", a)
+                            putExtra("DEVICE_NAME", n)
+
                         }
-                        startForegroundService(intent)
+                        startForegroundService(i)
                         finish()
+
                     },
-                    onStartScan = { callback -> bleManager.startScan(callback) },
-                    onStopScan = { callback -> bleManager.stopScan(callback) }
+                    oSS = { c -> bM.startScan(c) },
+                    oStopS = { c -> bM.stopScan(c) }
                 )
+
             }
+
         }
+
     }
 }
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ScanScreen(
-    onDeviceSelected: (String, String) -> Unit,
-    onStartScan: (ScanCallback) -> Unit,
-    onStopScan: (ScanCallback) -> Unit
+    oDS: (String, String) -> Unit,
+    oSS: (ScanCallback) -> Unit,
+    oStopS: (ScanCallback) -> Unit
 ) {
-    val devices = remember { mutableStateListOf<ScanResult>() }
-    var isScanning by remember { mutableStateOf(false) }
+    val dS = remember { mutableStateListOf<ScanResult>() }
+    var iS by remember { mutableStateOf(false) }
 
-    val callback = remember {
+
+    val c = remember {
         object : ScanCallback() {
+
             @SuppressLint("MissingPermission")
-            override fun onScanResult(callbackType: Int, result: ScanResult) {
-                // Filter out devices with no name or blank names
-                val name = result.device.name
-                if (!name.isNullOrBlank()) {
-                    if (devices.none { it.device.address == result.device.address }) {
-                        devices.add(result)
+            override fun onScanResult(cT: Int, r: ScanResult) {
+                
+                val n = r.device.name
+
+                if (!n.isNullOrBlank()) {
+
+                    if (dS.none { it.device.address == r.device.address }) {
+                        dS.add(r)
+
                     }
+
                 }
+
             }
+
         }
+
     }
 
-    // Automatically start scanning when the screen opens
+    
     LaunchedEffect(Unit) {
-        if (!isScanning) {
-            onStartScan(callback)
-            isScanning = true
+
+        if (!iS) {
+            oSS(c)
+            iS = true
+
         }
+
     }
+
 
     Scaffold(
         topBar = { TopAppBar(title = { Text("Scan BLE Devices") }) },
@@ -95,55 +116,69 @@ fun ScanScreen(
                 ) {
                     Button(
                         onClick = {
-                            if (!isScanning) {
-                                devices.clear()
-                                onStartScan(callback)
-                                isScanning = true
+
+                            if (!iS) {
+                                dS.clear()
+                                oSS(c)
+                                iS = true
+
                             } else {
-                                onStopScan(callback)
-                                isScanning = false
+                                oStopS(c)
+                                iS = false
+
                             }
+
                         },
                         modifier = Modifier.fillMaxWidth().height(50.dp),
                         shape = CircleShape,
-                        colors = if (isScanning) {
+                        colors = if (iS) {
                             ButtonDefaults.buttonColors(
                                 containerColor = MaterialTheme.colorScheme.errorContainer,
                                 contentColor = MaterialTheme.colorScheme.onErrorContainer
                             )
+
                         } else {
                             ButtonDefaults.buttonColors(
                                 containerColor = MaterialTheme.colorScheme.primaryContainer,
                                 contentColor = MaterialTheme.colorScheme.onPrimaryContainer
                             )
+
                         }
                     ) {
-                        Text(if (isScanning) "Stop Scan" else "Scan for nearby devices")
+                        Text(if (iS) "Stop Scan" else "Scan for nearby devices")
+
                     }
+
                 }
+
             }
+
         }
-    ) { padding ->
+    ) { p ->
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
+                .padding(p)
         ) {
-            items(devices) { result ->
+            items(dS) { r ->
                 @SuppressLint("MissingPermission")
-                val name = result.device.name ?: ""
-                val address = result.device.address
+                val n = r.device.name ?: ""
+                val a = r.device.address
                 
                 ListItem(
-                    headlineContent = { Text(name) },
-                    supportingContent = { Text(address) },
+                    headlineContent = { Text(n) },
+                    supportingContent = { Text(a) },
                     modifier = Modifier.clickable {
-                        onStopScan(callback)
-                        onDeviceSelected(address, name)
+                        oStopS(c)
+                        oDS(a, n)
+
                     }
                 )
                 HorizontalDivider()
+
             }
+
         }
+
     }
 }

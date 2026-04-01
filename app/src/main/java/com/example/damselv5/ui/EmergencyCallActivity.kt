@@ -11,14 +11,12 @@ import android.util.Log
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 
-/**
- * A transparent activity that breaks through background restrictions to initiate an emergency call.
- */
-class EmergencyCallActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
 
-        // Ensure this activity can appear over the lock screen
+class EmergencyCallActivity : ComponentActivity() {
+    override fun onCreate(sI: Bundle?) {
+        super.onCreate(sI)
+
+        
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true)
             setTurnScreenOn(true)
@@ -31,45 +29,45 @@ class EmergencyCallActivity : ComponentActivity() {
             )
         }
 
-        val phoneNumber = intent.getStringExtra("PHONE_NUMBER")
-        Log.d("EmergencyCallActivity", "Attempting to call: $phoneNumber")
+        val pN = intent.getStringExtra("PHONE_NUMBER")
         
-        if (!phoneNumber.isNullOrBlank()) {
-            makeCall(phoneNumber)
+        
+        if (!pN.isNullOrBlank()) {
+            mC(pN)
         } else {
             finish()
         }
     }
 
-    private fun makeCall(number: String) {
-        val normalized = PhoneNumberUtils.normalizeNumber(number)
-        val phoneUri = Uri.parse("tel:$normalized")
+    private fun mC(n: String) {
+        val nm = PhoneNumberUtils.normalizeNumber(n)
+        val pU = Uri.parse("tel:$nm")
         
-        // Try direct call first
-        val callIntent = Intent(Intent.ACTION_CALL, phoneUri).apply {
+        
+        val cI = Intent(Intent.ACTION_CALL, pU).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         
         try {
-            startActivity(callIntent)
-            Log.d("EmergencyCallActivity", "Direct call intent sent.")
-            // Delay finishing to ensure the dialer has time to take over
+            startActivity(cI)
+            
+            
             Handler(Looper.getMainLooper()).postDelayed({
                 finish()
             }, 2000)
         } catch (e: Exception) {
-            Log.e("EmergencyCallActivity", "Direct call failed: ${e.message}, falling back to dialer")
-            // Fallback to dialer
-            val dialIntent = Intent(Intent.ACTION_DIAL, phoneUri).apply {
+            
+            
+            val dI = Intent(Intent.ACTION_DIAL, pU).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             try {
-                startActivity(dialIntent)
+                startActivity(dI)
                 Handler(Looper.getMainLooper()).postDelayed({
                     finish()
                 }, 2000)
             } catch (e2: Exception) {
-                Log.e("EmergencyCallActivity", "Dialer fallback failed: ${e2.message}")
+                
                 finish()
             }
         }
@@ -77,7 +75,7 @@ class EmergencyCallActivity : ComponentActivity() {
 
     override fun onStop() {
         super.onStop()
-        // If we are no longer visible, we can safely finish
+
         if (!isFinishing) {
             finish()
         }

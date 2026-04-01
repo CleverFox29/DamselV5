@@ -8,89 +8,100 @@ import android.os.Vibrator
 import android.util.Log
 import android.widget.Toast
 
-/**
- * Handles the panic timer logic with countdown toasts.
- * Includes a small debounce to prevent accidental double-triggers.
- */
 class PanicManager(
-    private val context: Context,
-    private val onCountdownUpdate: (Int) -> Unit,
-    private val onTriggerEmergency: () -> Unit
+    private val c: Context,
+    private val oCU: (Int) -> Unit,
+    private val oTE: () -> Unit
 ) {
 
-    private val handler = Handler(Looper.getMainLooper())
-    private var isTimerRunning = false
-    private var countdownValue = 4
-    private var currentToast: Toast? = null
-    private var lastSignalTime: Long = 0
+    private val h: Handler = Handler(Looper.getMainLooper())
+    private var iTR: Boolean = false
+    private var cV: Int = 4
+    private var cT: Toast? = null
+    private var lST: Long = 0
 
-    private val countdownRunnable = object : Runnable {
+    private val cR: Runnable = object : Runnable {
         override fun run() {
-            if (countdownValue > 0) {
-                showToast("EMERGENCY in $countdownValue seconds! Press again to CANCEL.")
-                vibrateShort()
-                onCountdownUpdate(countdownValue)
-                countdownValue--
-                handler.postDelayed(this, 1000)
+            if (cV > 0) {
+                sT("EMERGENCY in " + cV + " seconds! Press again to CANCEL.")
+                vS()
+                oCU.invoke(cV)
+                cV = cV - 1
+                h.postDelayed(this, 1000)
+
             } else {
-                Log.d("PanicManager", "Countdown finished! Triggering emergency.")
-                onCountdownUpdate(0)
-                onTriggerEmergency()
-                isTimerRunning = false
+                oCU.invoke(0)
+                oTE.invoke()
+                iTR = false
+
             }
+
         }
+
     }
 
-    /**
-     * Called when "#" is received via BLE or Simulation.
-     */
     fun handlePanicSignal() {
-        val currentTime = System.currentTimeMillis()
-        // Ignore signals received within 1 second of the last one to prevent double-triggers
-        if (currentTime - lastSignalTime < 1000) {
-            Log.d("PanicManager", "Ignored rapid duplicate panic signal.")
+        val currentTime: Long = System.currentTimeMillis()
+        
+        if (currentTime - lST < 1000) {
             return
-        }
-        lastSignalTime = currentTime
 
-        handler.post {
-            if (isTimerRunning) {
-                // Second signal received within the countdown -> Cancel
-                cancelPanicTimer()
-                showToast("Panic Alert CANCELED.")
-                Log.d("PanicManager", "Panic Alert Canceled.")
+        }
+        lST = currentTime
+
+        h.post(Runnable {
+            if (iTR == true) {
+                cPT()
+                sT("Panic Alert CANCELED.")
+
             } else {
-                // First signal received -> Start countdown
-                startPanicTimer()
-                Log.d("PanicManager", "Panic Signal Received. Starting countdown.")
+                sPT()
+
             }
+
+        })
+
+    }
+
+    private fun sPT() {
+        iTR = true
+        cV = 4
+        h.post(cR)
+
+    }
+
+    private fun cPT() {
+        h.removeCallbacks(cR)
+        iTR = false
+        oCU.invoke(-1) 
+
+    }
+
+    private fun sT(m: String) {
+        h.post(Runnable {
+            if (cT != null) {
+                cT!!.cancel()
+
+            }
+            cT = Toast.makeText(c, m, Toast.LENGTH_SHORT)
+            if (cT != null) {
+                cT!!.show()
+
+            }
+
+        })
+
+    }
+
+    private fun vS() {
+        val v: Vibrator? = c.getSystemService(Vibrator::class.java)
+        if (v != null) {
+            if (v.hasVibrator() == true) {
+                v.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
+
+            }
+
         }
-    }
 
-    private fun startPanicTimer() {
-        isTimerRunning = true
-        countdownValue = 4
-        handler.post(countdownRunnable)
-    }
-
-    private fun cancelPanicTimer() {
-        handler.removeCallbacks(countdownRunnable)
-        isTimerRunning = false
-        onCountdownUpdate(-1) // -1 signifies cancelled/reset
-    }
-
-    private fun showToast(message: String) {
-        handler.post {
-            currentToast?.cancel()
-            currentToast = Toast.makeText(context, message, Toast.LENGTH_SHORT)
-            currentToast?.show()
-        }
-    }
-
-    private fun vibrateShort() {
-        val vibrator = context.getSystemService(Vibrator::class.java)
-        if (vibrator != null && vibrator.hasVibrator()) {
-            vibrator.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
-        }
     }
 }

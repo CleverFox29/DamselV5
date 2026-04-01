@@ -11,19 +11,19 @@ abstract class AppDatabase : RoomDatabase() {
 
     companion object {
         @Volatile
-        private var INSTANCE: AppDatabase? = null
+        private var I: AppDatabase? = null
 
-        fun getDatabase(context: Context): AppDatabase {
-            return INSTANCE ?: synchronized(this) {
-                val instance = Room.databaseBuilder(
-                    context.applicationContext,
+        fun getDatabase(c: Context): AppDatabase {
+            return I ?: synchronized(this) {
+                val ins = Room.databaseBuilder(
+                    c.applicationContext,
                     AppDatabase::class.java,
                     "damsel_database"
                 )
-                .fallbackToDestructiveMigration() // Bumps to version 2 and clears old data to apply unique index
+                .fallbackToDestructiveMigration() 
                 .build()
-                INSTANCE = instance
-                instance
+                I = ins
+                ins
             }
         }
     }

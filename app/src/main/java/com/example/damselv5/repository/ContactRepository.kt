@@ -4,15 +4,17 @@ import com.example.damselv5.data.ContactDao
 import com.example.damselv5.data.ContactEntity
 import kotlinx.coroutines.flow.Flow
 
-class ContactRepository(private val contactDao: ContactDao) {
+class ContactRepository(private val d: ContactDao) {
 
-    val allContacts: Flow<List<ContactEntity>> = contactDao.getAllContacts()
+    val allContacts: Flow<List<ContactEntity>> = d.gAC()
 
-    suspend fun insert(contact: ContactEntity): Long {
-        return contactDao.insertContact(contact)
+    suspend fun insert(c: ContactEntity): Long {
+        
+        return d.iC(c)
     }
 
-    suspend fun delete(contact: ContactEntity) {
-        contactDao.deleteContact(contact)
+    suspend fun delete(c: ContactEntity) {
+        
+        d.dC(c)
     }
 }

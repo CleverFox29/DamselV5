@@ -6,31 +6,42 @@ import androidx.lifecycle.LiveData
 import androidx.lifecycle.asLiveData
 import androidx.lifecycle.viewModelScope
 import com.example.damselv5.data.AppDatabase
+import com.example.damselv5.data.ContactDao
 import com.example.damselv5.data.ContactEntity
 import com.example.damselv5.repository.ContactRepository
-import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 
-class ContactViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val repository: ContactRepository
-    val allContacts: LiveData<List<ContactEntity>>
+class ContactViewModel(a: Application) : AndroidViewModel(a) {
+
+    private val r: ContactRepository
+    val all: LiveData<List<ContactEntity>>
+
 
     init {
-        val contactDao = AppDatabase.getDatabase(application).contactDao()
-        repository = ContactRepository(contactDao)
-        allContacts = repository.allContacts.asLiveData()
+        val db: AppDatabase = AppDatabase.getDatabase(a)
+        val d: ContactDao = db.contactDao()
+        r = ContactRepository(d)
+        all = r.allContacts.asLiveData()
+
     }
 
-    /**
-     * Inserts a contact and returns the row ID.
-     * Returns -1 if the contact already exists (conflict).
-     */
-    suspend fun insert(name: String, phoneNumber: String): Long {
-        return repository.insert(ContactEntity(name = name, phoneNumber = phoneNumber))
+
+    suspend fun insert(n: String, p: String): Long {
+        val c: ContactEntity = ContactEntity(0, n, p)
+        val result: Long = r.insert(c)
+
+        return result
+
     }
 
-    fun delete(contact: ContactEntity) = viewModelScope.launch {
-        repository.delete(contact)
+
+    fun delete(c: ContactEntity) {
+
+        viewModelScope.launch {
+            r.delete(c)
+
+        }
+
     }
 }

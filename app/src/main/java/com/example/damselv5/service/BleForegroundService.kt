@@ -4,11 +4,13 @@ import android.annotation.SuppressLint
 import android.app.*
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothGatt
+import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.SharedPreferences
 import android.content.pm.ServiceInfo
 import android.media.AudioAttributes
 import android.media.AudioManager
@@ -16,11 +18,9 @@ import android.media.MediaPlayer
 import android.media.RingtoneManager
 import android.net.Uri
 import android.os.*
-import android.telecom.TelecomManager
 import android.telephony.PhoneNumberUtils
 import android.util.Log
 import android.widget.Toast
-import androidx.core.content.edit
 import com.example.damselv5.MainActivity
 import com.example.damselv5.R
 import com.example.damselv5.ble.BleManager
@@ -32,19 +32,20 @@ import com.example.damselv5.util.PanicManager
 import com.example.damselv5.util.SmsHelper
 import kotlinx.coroutines.*
 
+
 class BleForegroundService : Service() {
 
-    private lateinit var bleManager: BleManager
-    private lateinit var panicManager: PanicManager
-    private lateinit var smsHelper: SmsHelper
-    private lateinit var locationHelper: LocationHelper
-    private lateinit var audioManager: AudioManager
-    private var mediaPlayer: MediaPlayer? = null
-    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private lateinit var bM: BleManager
+    private lateinit var pM: PanicManager
+    private lateinit var sH: SmsHelper
+    private lateinit var lH: LocationHelper
+    private lateinit var aM: AudioManager
+    private var mP: MediaPlayer? = null
+    private val sS = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     
-    private var wakeLock: PowerManager.WakeLock? = null
-    private val originalVolumes = mutableMapOf<Int, Int>()
-    private val streamsToManage = intArrayOf(
+    private var wL: PowerManager.WakeLock? = null
+    private val oV = mutableMapOf<Int, Int>()
+    private val sTM = intArrayOf(
         AudioManager.STREAM_RING,
         AudioManager.STREAM_NOTIFICATION,
         AudioManager.STREAM_MUSIC,
@@ -52,544 +53,784 @@ class BleForegroundService : Service() {
         AudioManager.STREAM_ALARM
     )
 
-    private var connectedDeviceName: String = "None"
-    private var connectedDeviceAddress: String? = null
-    private var connectionStatus: String = "Disconnected"
-    private var currentCountdown: Int = -1
+    private var cDN: String = "None"
+    private var cDA: String? = null
+    private var cS: String = "Disconnected"
+    private var cC: Int = -1
     
-    private var isStoppingIntentionally = false
-    private var connectionLostJob: Job? = null
-    private var hasStableConnectionEstablished = false
+    private var iSI = false
+    private var cLJ: Job? = null
+    private var hSCE = false
 
-    private val handler = Handler(Looper.getMainLooper())
-    private val reconnectRunnable = object : Runnable {
+
+    private val h = Handler(Looper.getMainLooper())
+    private val rR = object : Runnable {
+
         override fun run() {
-            if (connectionStatus != "Connected" && connectedDeviceAddress != null) {
-                Log.d("BleService", "Auto-reconnecting...")
-                updateStatus("Reconnecting...")
-                bleManager.connect(connectedDeviceAddress!!)
-                handler.postDelayed(this, 5000)
-            }
-        }
-    }
 
-    private val bluetoothStateReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            if (BluetoothAdapter.ACTION_STATE_CHANGED == intent.action) {
-                val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)
-                when (state) {
-                    BluetoothAdapter.STATE_OFF -> {
-                        if (connectionStatus == "Connected" && !isStoppingIntentionally) {
-                            Log.d("BleService", "Bluetooth turned OFF while connected. Status will update via GATT callback if possible, but forced here.")
-                            // We don't call startSiren() here because Bluetooth turning off 
-                            // will trigger BluetoothProfile.STATE_DISCONNECTED in the gattCallback,
-                            // which already handles showDisconnectAlert(), startSiren(), and SMS.
-                            // Adding it here causes a "double alarm".
+            if (cS.equals("Connected") == false && cS.equals("Bluetooth Off") == false && cDA != null) {
+                uS("Reconnecting...")
 
-                            connectionStatus = "Disconnected"
-                            updateStatus("Reconnecting...")
-                            handler.removeCallbacks(reconnectRunnable)
-                            handler.postDelayed(reconnectRunnable, 2000)
-                        }
-                    }
-                    BluetoothAdapter.STATE_ON -> {
-                        if (connectedDeviceAddress != null && connectionStatus != "Connected") {
-                            Log.d("BleService", "Bluetooth turned ON. Retrying connection immediately.")
-                            handler.removeCallbacks(reconnectRunnable)
-                            handler.post(reconnectRunnable)
-                        }
-                    }
+                if (cDA != null) {
+                    bM.connect(cDA!!)
+
                 }
+                h.postDelayed(this, 5000)
+
             }
+
         }
+
     }
+
+
+    private val bSR = object : BroadcastReceiver() {
+
+        override fun onReceive(c: Context, i: Intent) {
+            val action = i.action
+
+            if (BluetoothAdapter.ACTION_STATE_CHANGED.equals(action)) {
+                val s = i.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)
+
+                if (s == BluetoothAdapter.STATE_OFF) {
+                    cS = "Bluetooth Off"
+                    uS("Bluetooth Off")
+                    h.removeCallbacks(rR)
+
+                } else if (s == BluetoothAdapter.STATE_ON) {
+
+                    if (cDA != null) {
+                        cS = "Disconnected"
+                        uS("Reconnecting...")
+                        h.removeCallbacks(rR)
+                        h.post(rR)
+
+                    }
+
+                }
+
+            }
+
+        }
+
+    }
+
 
     override fun onCreate() {
         super.onCreate()
-        bleManager = BleManager(this)
-        smsHelper = SmsHelper(this)
-        locationHelper = LocationHelper(this)
-        audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        bM = BleManager(this)
+        sH = SmsHelper(this)
+        lH = LocationHelper(this)
+        aM = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         
-        panicManager = PanicManager(this, 
-            onCountdownUpdate = { seconds ->
-                currentCountdown = seconds
-                if (seconds > 0) {
-                    muteDevice()
-                } else if (seconds == -1) {
-                    restoreVolume()
+        pM = PanicManager(this, 
+            oCU = { s: Int ->
+                cC = s
+
+                if (s > 0) {
+                    mD()
+
+                } else if (s == -1) {
+                    rV()
+
                 }
-                // Update global state for UI sync
-                BleStatus.updateCountdown(seconds)
-                updateStatus(connectionStatus)
+                BleStatus.updateCountdown(s)
+                uS(cS)
+
             },
-            onTriggerEmergency = {
-                triggerEmergencyAction()
+            oTE = {
+                tEA()
+
             }
         )
 
-        bleManager.onConnectionStateChanged = { status, newState ->
-            when (newState) {
-                BluetoothProfile.STATE_CONNECTED -> {
-                    if (status == BluetoothGatt.GATT_SUCCESS) {
-                        val wasDisconnected = connectionStatus != "Connected"
-                        connectionStatus = "Connected"
-                        if (wasDisconnected) {
-                            stopSiren()
-                            connectionLostJob?.cancel() // Prevents "Lost" SMS if recovered quickly
-                            if (hasStableConnectionEstablished) {
-                                sendReconnectedSms()
-                            }
-                            hasStableConnectionEstablished = true
-                            Log.d("BleService", "Device Connected successfully. Stable connection marked.")
+        bM.oCSC = { st, nS ->
+
+            if (nS == BluetoothProfile.STATE_CONNECTED) {
+
+                if (st == BluetoothGatt.GATT_SUCCESS) {
+                    val wD = cS.equals("Connected") == false
+                    cS = "Connected"
+
+                    if (wD == true) {
+                        sSiren()
+
+                        if (cLJ != null) {
+                            cLJ!!.cancel()
+
                         }
-                        handler.removeCallbacks(reconnectRunnable)
-                        updateStatus("Connected")
-                    }
-                }
-                BluetoothProfile.STATE_DISCONNECTED -> {
-                    if (connectionStatus == "Connected" && !isStoppingIntentionally) {
-                        if (hasStableConnectionEstablished) {
-                            showDisconnectAlert()
-                            startSiren()
-                            connectionLostJob = sendConnectionLostSms()
+
+                        if (hSCE == true) {
+                            sRS()
+
                         }
+                        hSCE = true
+
                     }
-                    connectionStatus = "Disconnected"
-                    updateStatus("Reconnecting...")
-                    handler.removeCallbacks(reconnectRunnable)
-                    handler.postDelayed(reconnectRunnable, 5000)
+                    h.removeCallbacks(rR)
+                    uS("Connected")
+
                 }
+
+            } else if (nS == BluetoothProfile.STATE_DISCONNECTED) {
+
+                if (cS.equals("Connected") == true && iSI == false) {
+
+                    if (hSCE == true) {
+                        sDA()
+                        stSiren()
+                        cLJ = sCLS()
+
+                    }
+
+                }
+                
+                val bm = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+                val ba = bm.adapter
+                
+                if (ba != null && ba.isEnabled == false) {
+                    cS = "Bluetooth Off"
+                    uS("Bluetooth Off")
+                    h.removeCallbacks(rR)
+                } else {
+                    cS = "Disconnected"
+                    uS("Reconnecting...")
+                    h.removeCallbacks(rR)
+                    h.postDelayed(rR, 5000)
+                }
+
             }
+
         }
 
-        bleManager.onDataReceived = { data ->
-            if (data.contains("#")) {
-                acquireWakeLock() 
-                panicManager.handlePanicSignal()
+        bM.oDR = { d ->
+
+            if (d.contains("#") == true) {
+                aWL() 
+                pM.handlePanicSignal()
+
             }
+
         }
 
-        registerReceiver(bluetoothStateReceiver, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED))
+        val filter = IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED)
+        registerReceiver(bSR, filter)
+
     }
 
-    private fun startSiren() {
-        try {
-            maximizeAllVolumes()
 
-            if (mediaPlayer == null) {
-                mediaPlayer = MediaPlayer.create(this, R.raw.siren)?.apply {
-                    isLooping = true
-                    setAudioAttributes(
-                        AudioAttributes.Builder()
+    private fun stSiren() {
+
+        try {
+            mAV()
+
+            if (mP == null) {
+                mP = MediaPlayer.create(this, R.raw.siren)
+
+                if (mP != null) {
+                    mP!!.isLooping = true
+                    val attributes = AudioAttributes.Builder()
                             .setUsage(AudioAttributes.USAGE_ALARM)
                             .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                             .build()
-                    )
+                    mP!!.setAudioAttributes(attributes)
+
                 }
+
             }
             
-            mediaPlayer?.let { mp ->
-                if (!mp.isPlaying) {
-                    mp.start()
-                    Log.d("BleService", "Siren started.")
+            if (mP != null) {
+
+                if (mP!!.isPlaying == false) {
+                    mP!!.start()
+
                 }
-            } ?: Log.e("BleService", "Failed to create MediaPlayer for siren.")
+
+            } 
             
         } catch (e: Exception) {
-            Log.e("BleService", "Error starting siren: ${e.message}")
+            // Error handling
         }
+
     }
 
-    private fun stopSiren() {
+
+    private fun sSiren() {
+
         try {
-            mediaPlayer?.let {
-                if (it.isPlaying) {
-                    it.stop()
+
+            if (mP != null) {
+
+                if (mP!!.isPlaying == true) {
+                    mP!!.stop()
+
                 }
-                it.release()
-                Log.d("BleService", "Siren stopped.")
+                mP!!.release()
+                mP = null
+
             }
-            restoreVolume()
+            rV()
+
         } catch (e: Exception) {
-            Log.e("BleService", "Error stopping siren: ${e.message}")
-        } finally {
-            mediaPlayer = null
+            // Error handling
         }
+
     }
 
-    private fun maximizeAllVolumes() {
-        if (originalVolumes.isEmpty()) {
-            for (stream in streamsToManage) {
+
+    private fun mAV() {
+
+        if (oV.isEmpty() == true) {
+
+            for (s in sTM) {
+
                 try {
-                    originalVolumes[stream] = audioManager.getStreamVolume(stream)
-                    val maxVol = audioManager.getStreamMaxVolume(stream)
-                    audioManager.setStreamVolume(stream, maxVol, 0)
+                    oV.put(s, aM.getStreamVolume(s))
+                    val mV = aM.getStreamMaxVolume(s)
+                    aM.setStreamVolume(s, mV, 0)
+
                 } catch (e: Exception) {
-                    Log.e("BleService", "Could not maximize stream $stream: ${e.message}")
+                    // Error
                 }
+
             }
-            Log.d("BleService", "All volumes maximized for siren.")
+
         }
+
     }
 
-    private fun muteDevice() {
-        if (originalVolumes.isEmpty()) {
-            val streamsToMute = intArrayOf(
+
+    private fun mD() {
+
+        if (oV.isEmpty() == true) {
+            val sTMu = intArrayOf(
                 AudioManager.STREAM_RING,
                 AudioManager.STREAM_NOTIFICATION,
                 AudioManager.STREAM_MUSIC,
                 AudioManager.STREAM_SYSTEM
             )
-            for (stream in streamsToMute) {
+
+            for (s in sTMu) {
+
                 try {
-                    originalVolumes[stream] = audioManager.getStreamVolume(stream)
-                    audioManager.setStreamVolume(stream, 0, 0)
+                    oV.put(s, aM.getStreamVolume(s))
+                    aM.setStreamVolume(s, 0, 0)
+
                 } catch (e: Exception) {
-                    Log.e("BleService", "Could not mute stream $stream: ${e.message}")
+                    // Error
                 }
+
             }
-            Log.d("BleService", "Device muted for emergency countdown.")
+
         }
+
     }
 
-    private fun restoreVolume() {
-        if (originalVolumes.isNotEmpty()) {
-            for ((stream, volume) in originalVolumes) {
+
+    private fun rV() {
+
+        if (oV.isEmpty() == false) {
+
+            for (entry in oV.entries) {
+
                 try {
-                    audioManager.setStreamVolume(stream, volume, 0)
+                    val s = entry.key
+                    val v = entry.value
+                    aM.setStreamVolume(s, v, 0)
+
                 } catch (e: Exception) {
-                    Log.e("BleService", "Could not restore stream $stream: ${e.message}")
+                    // Error
                 }
+
             }
-            originalVolumes.clear()
-            Log.d("BleService", "Volumes restored.")
+            oV.clear()
+
         }
+
     }
 
-    private fun sendConnectionLostSms(): Job {
-        return serviceScope.launch {
-            val locationUrl = locationHelper.getLastLocation()
-            val message = "CRITICAL ALERT: Panic Button Connection LOST! Last known location:\n$locationUrl"
-            sendSmsToAllContacts(message)
+
+    private fun sCLS(): Job {
+
+        return sS.launch {
+            val lU = lH.getLastLocation()
+            val m = "CRITICAL ALERT: Panic Button Connection LOST! Last known location:\n" + lU
+            sSTAC(m)
+
         }
+
     }
 
-    private fun sendReconnectedSms() {
-        serviceScope.launch {
-            val message = "DamselV5: Device reconnected. Protection is active."
-            sendSmsToAllContacts(message)
+
+    private fun sRS() {
+
+        sS.launch {
+            val m = "DamselV5: Device reconnected. Protection is active."
+            sSTAC(m)
+
         }
+
     }
 
-    private suspend fun sendSmsToAllContacts(message: String) {
+
+    private suspend fun sSTAC(m: String) {
+
         withContext(Dispatchers.IO) {
+
             try {
-                val database = AppDatabase.getDatabase(applicationContext)
-                val contacts = database.contactDao().getAllContactsSync()
-                val prefs = getSharedPreferences("emergency_prefs", MODE_PRIVATE)
-                val primaryNumber = prefs.getString("primary_number", "")
+                val db = AppDatabase.getDatabase(applicationContext)
+                val cs = db.contactDao().gACS()
+                val pr = getSharedPreferences("emergency_prefs", MODE_PRIVATE)
+                val pN = pr.getString("primary_number", "")
                 
-                val recipients = mutableSetOf<String>()
-                contacts.forEach { recipients.add(it.phoneNumber) }
+                val rs = mutableSetOf<String>()
+
+                for (contact in cs) {
+                    rs.add(contact.phoneNumber)
+
+                }
                 
-                if (!primaryNumber.isNullOrBlank()) {
-                    val alreadyInList = contacts.any { 
-                        PhoneNumberUtils.compare(it.phoneNumber, primaryNumber)
+                if (pN != null && pN.equals("") == false) {
+                    var aIL = false
+
+                    for (contact in cs) {
+
+                        if (PhoneNumberUtils.compare(contact.phoneNumber, pN) == true) {
+                            aIL = true
+                            break
+
+                        }
+
                     }
-                    if (!alreadyInList) {
-                        recipients.add(primaryNumber)
+
+                    if (aIL == false) {
+                        rs.add(pN)
+
                     }
+
                 }
 
-                recipients.forEach { number ->
-                    smsHelper.sendSms(number, message)
+                for (n in rs) {
+                    sH.sendSms(n, m)
+
                 }
-                Log.d("BleService", "SMS notification sent to all recipients.")
+
             } catch (e: Exception) {
-                Log.e("BleService", "Failed to send SMS notification: ${e.message}")
+                // Error
             }
+
         }
+
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val address = intent?.getStringExtra("DEVICE_ADDRESS")
-        val name = intent?.getStringExtra("DEVICE_NAME")
 
-        when (intent?.action) {
-            ACTION_STOP_SERVICE -> {
-                Log.d("BleService", "ACTION_STOP_SERVICE received. Status: $connectionStatus")
-                isStoppingIntentionally = true
-                
-                // Use a separate background thread for SMS to avoid blocking/crashing during stopSelf
-                Thread {
-                    if (connectionStatus != "Connected" && hasStableConnectionEstablished) {
-                        Log.d("BleService", "Sending intentional disconnect SMS...")
+    override fun onStartCommand(i: Intent?, f: Int, sId: Int): Int {
+
+        if (i != null) {
+            val a = i.getStringExtra("DEVICE_ADDRESS")
+            val n = i.getStringExtra("DEVICE_NAME")
+            val action = i.action
+
+            if (ACTION_STOP_SERVICE.equals(action)) {
+                iSI = true
+                val thread = Thread(Runnable {
+
+                    if (cS.equals("Connected") == false && hSCE == true) {
+
                         runBlocking {
-                            connectionLostJob?.join()
-                            sendSmsToAllContacts("Device was disconnected by the user while the app was trying to restore connection to BLE device.")
+
+                            if (cLJ != null) {
+                                cLJ!!.join()
+
+                            }
+                            sSTAC("Device was disconnected by the user while the app was trying to restore connection to BLE device.")
+
                         }
+
                     }
                     
-                    // Final cleanup from background thread
-                    handler.post {
-                        handler.removeCallbacks(reconnectRunnable)
-                        stopSiren()
-                        restoreVolume()
-                        releaseWakeLock()
+                    h.post(Runnable {
+                        h.removeCallbacks(rR)
+                        sSiren()
+                        rV()
+                        rWL()
                         
-                        getSharedPreferences("ble_prefs", MODE_PRIVATE).edit { clear() }
+                        val pr = getSharedPreferences("ble_prefs", MODE_PRIVATE)
+                        val ed = pr.edit()
+                        ed.clear()
+                        ed.commit()
+                        
                         stopForeground(STOP_FOREGROUND_REMOVE)
                         stopSelf()
-                    }
-                }.start()
-                
-                return START_NOT_STICKY
-            }
-            ACTION_SIMULATE_PANIC -> {
-                Log.d("BleService", "Simulated panic signal received.")
-                acquireWakeLock()
-                panicManager.handlePanicSignal()
-                return START_STICKY
-            }
-        }
 
-        if (address != null) {
-            isStoppingIntentionally = false
-            hasStableConnectionEstablished = false // Reset for new device connection
-            getSharedPreferences("ble_prefs", MODE_PRIVATE).edit {
-                putString("last_address", address)
-                putString("last_name", name)
+                    })
+
+                })
+                thread.start()
+                return START_NOT_STICKY
+
+            } else if (ACTION_SIMULATE_PANIC.equals(action)) {
+                aWL()
+                pM.handlePanicSignal()
+                return START_STICKY
+
             }
-            connectedDeviceAddress = address
-            connectedDeviceName = name ?: "Unknown"
-            connectionStatus = "Connecting..."
-            updateStatus("Connecting...")
-            bleManager.connect(address)
-        } else {
-            val prefs = getSharedPreferences("ble_prefs", MODE_PRIVATE)
-            val savedAddress = prefs.getString("last_address", null)
-            if (savedAddress != null) {
-                isStoppingIntentionally = false
-                connectedDeviceAddress = savedAddress
-                connectedDeviceName = prefs.getString("last_name", "Unknown") ?: "Unknown"
-                if (connectionStatus != "Connected") {
-                    connectionStatus = "Disconnected"
-                    updateStatus("Reconnecting...")
-                    bleManager.connect(savedAddress)
+
+            if (a != null) {
+                iSI = false
+                hSCE = false 
+                val pr = getSharedPreferences("ble_prefs", MODE_PRIVATE)
+                val ed = pr.edit()
+                ed.putString("last_address", a)
+                ed.putString("last_name", n)
+                ed.commit()
+                
+                cDA = a
+
+                if (n != null) {
+                    cDN = n
+
+                } else {
+                    cDN = "Unknown"
+
                 }
+                cS = "Connecting..."
+                uS("Connecting...")
+                bM.connect(a)
+
+            } else {
+                val pr = getSharedPreferences("ble_prefs", MODE_PRIVATE)
+                val sA = pr.getString("last_address", null)
+
+                if (sA != null) {
+                    iSI = false
+                    cDA = sA
+                    val savedName = pr.getString("last_name", "Unknown")
+
+                    if (savedName != null) {
+                        cDN = savedName
+
+                    } else {
+                        cDN = "Unknown"
+
+                    }
+
+                    if (cS.equals("Connected") == false) {
+                        val bm = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+                        val ba = bm.adapter
+                        
+                        if (ba != null && ba.isEnabled == false) {
+                            cS = "Bluetooth Off"
+                            uS("Bluetooth Off")
+                        } else {
+                            cS = "Disconnected"
+                            uS("Reconnecting...")
+                            bM.connect(sA)
+                        }
+
+                    }
+
+                }
+
             }
+
         }
 
         return START_STICKY
+
     }
 
-    private fun updateStatus(status: String) {
-        BleStatus.updateState(status)
-        BleStatus.updateDeviceName(connectedDeviceName)
 
-        val notification = createLiveNotification(status)
+    private fun uS(st: String) {
+        BleStatus.updateState(st)
+        BleStatus.updateDeviceName(cDN)
+
+        val notification = cLN(st)
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
+            startForeground(N_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
+
         } else {
-            startForeground(NOTIFICATION_ID, notification)
+            startForeground(N_ID, notification)
+
         }
+
     }
 
-    private fun showDisconnectAlert() {
-        handler.post {
-            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val vibratorManager = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
-                vibratorManager.defaultVibrator
+
+    private fun sDA() {
+
+        h.post(Runnable {
+            val vibrator: Vibrator
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val vM = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+                vibrator = vM.defaultVibrator
+
             } else {
                 @Suppress("DEPRECATION")
-                getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+                vibrator = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+
             }
             
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 vibrator.vibrate(VibrationEffect.createOneShot(1000, VibrationEffect.DEFAULT_AMPLITUDE))
+
             } else {
                 @Suppress("DEPRECATION")
                 vibrator.vibrate(1000)
+
             }
 
             try {
-                val notificationUri: Uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-                val r = RingtoneManager.getRingtone(applicationContext, notificationUri)
-                r.play()
+                val nU = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+                val r = RingtoneManager.getRingtone(applicationContext, nU)
+
+                if (r != null) {
+                    r.play()
+
+                }
+
             } catch (e: Exception) {
-                Log.e("BleService", "Sound alert failed: ${e.message}")
+                // Sound failed
             }
 
-            Toast.makeText(this, "CRITICAL: Panic Button Disconnected!", Toast.LENGTH_LONG).show()
-        }
+            Toast.makeText(this@BleForegroundService, "CRITICAL: Panic Button Disconnected!", Toast.LENGTH_LONG).show()
+
+        })
+
     }
+
 
     @SuppressLint("WakelockTimeout")
-    private fun acquireWakeLock() {
-        if (wakeLock == null) {
-            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-            wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "DamselV5::PanicWakeLock")
+    private fun aWL() {
+
+        if (wL == null) {
+            val pM = getSystemService(Context.POWER_SERVICE) as PowerManager
+            wL = pM.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "DamselV5::PanicWakeLock")
+
         }
-        if (wakeLock?.isHeld == false) {
-            wakeLock?.acquire(30000) 
-            Log.d("BleService", "WakeLock acquired.")
+
+        if (wL != null) {
+
+            if (wL!!.isHeld == false) {
+                wL!!.acquire(30000) 
+
+            }
+
         }
+
     }
 
-    private fun releaseWakeLock() {
-        if (wakeLock?.isHeld == true) {
-            wakeLock?.release()
-            Log.d("BleService", "WakeLock released.")
+
+    private fun rWL() {
+
+        if (wL != null) {
+
+            if (wL!!.isHeld == true) {
+                wL!!.release()
+
+            }
+
         }
+
     }
+
 
     @SuppressLint("MissingPermission")
-    private fun triggerEmergencyAction() {
-        initiateEmergencyCall()
+    private fun tEA() {
+        iEC()
 
-        serviceScope.launch {
-            val locationUrl = locationHelper.getLastLocation()
-            val prefs = getSharedPreferences("emergency_prefs", MODE_PRIVATE)
-            val primaryNumber = prefs.getString("primary_number", "")
+        sS.launch {
+            val lU = lH.getLastLocation()
+            val pr = getSharedPreferences("emergency_prefs", MODE_PRIVATE)
+            val pN = pr.getString("primary_number", "")
             
             try {
+
                 withContext(Dispatchers.IO) {
-                    val database = AppDatabase.getDatabase(applicationContext)
-                    val contacts = database.contactDao().getAllContactsSync()
-                    val message = "EMERGENCY! I may be in danger. Please help immediately.\n$locationUrl"
+                    val db = AppDatabase.getDatabase(applicationContext)
+                    val cs = db.contactDao().gACS()
+                    val m = "EMERGENCY! I may be in danger. Please help immediately.\n" + lU
                     
-                    val recipients = mutableSetOf<String>()
-                    contacts.forEach { recipients.add(it.phoneNumber) }
-                    
-                    if (!primaryNumber.isNullOrBlank()) {
-                        val alreadyInList = contacts.any { 
-                            PhoneNumberUtils.compare(it.phoneNumber, primaryNumber)
-                        }
-                        if (!alreadyInList) {
-                            recipients.add(primaryNumber)
-                        }
+                    val rs = mutableSetOf<String>()
+
+                    for (contact in cs) {
+                        rs.add(contact.phoneNumber)
+
                     }
                     
-                    recipients.forEach { number ->
-                        smsHelper.sendSms(number, message)
+                    if (pN != null && pN.equals("") == false) {
+                        var aIL = false
+
+                        for (contact in cs) {
+
+                            if (PhoneNumberUtils.compare(contact.phoneNumber, pN) == true) {
+                                aIL = true
+                                break
+
+                            }
+
+                        }
+
+                        if (aIL == false) {
+                            rs.add(pN)
+
+                        }
+
                     }
+                    
+                    for (n in rs) {
+                        sH.sendSms(n, m)
+
+                    }
+
                 }
+
             } catch (e: Exception) {
-                Log.e("BleService", "Emergency SMS failed: ${e.message}")
+                // SMS failed
             } finally {
-                currentCountdown = -1
-                // Update global state for UI sync
+                cC = -1
                 BleStatus.updateCountdown(-1)
-                updateStatus(connectionStatus)
-                restoreVolume()
-                handler.postDelayed({ releaseWakeLock() }, 5000)
+                uS(cS)
+                rV()
+                h.postDelayed(Runnable { rWL() }, 5000)
+
             }
+
         }
+
     }
+
 
     @SuppressLint("MissingPermission")
-    private fun initiateEmergencyCall() {
-        val prefs = getSharedPreferences("emergency_prefs", MODE_PRIVATE)
-        val primaryNumber = prefs.getString("primary_number", "")
+    private fun iEC() {
+        val pr = getSharedPreferences("emergency_prefs", MODE_PRIVATE)
+        val pN = pr.getString("primary_number", "")
         
-        if (!primaryNumber.isNullOrBlank()) {
-            Log.d("BleService", "Triggering Emergency Call Activity for $primaryNumber")
-            val callIntent = Intent(this, EmergencyCallActivity::class.java).apply {
-                putExtra("PHONE_NUMBER", primaryNumber)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                addFlags(Intent.FLAG_ACTIVITY_NO_USER_ACTION)
-                addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
-            }
+        if (pN != null && pN.equals("") == false) {
+            val cI = Intent(this, EmergencyCallActivity::class.java)
+            cI.putExtra("PHONE_NUMBER", pN)
+            cI.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            cI.addFlags(Intent.FLAG_ACTIVITY_NO_USER_ACTION)
+            cI.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
             
             try {
-                startActivity(callIntent)
+                startActivity(cI)
+
             } catch (e: Exception) {
-                Log.e("BleService", "Direct Activity start failed, relying on FullScreenIntent: ${e.message}")
+                // Call failed
             }
+
         }
+
     }
 
-    private fun createLiveNotification(status: String): Notification {
-        val channelId = "damsel_live_channel"
+
+    private fun cLN(st: String): Notification {
+        val cI = "damsel_live_channel"
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val manager = getSystemService(NotificationManager::class.java)
-            if (manager.getNotificationChannel(channelId) == null) {
-                val channel = NotificationChannel(channelId, "DamselV5 Protection", NotificationManager.IMPORTANCE_HIGH).apply {
-                    setSound(null, null)
-                    enableVibration(false)
-                }
-                manager.createNotificationChannel(channel)
+            val m = getSystemService(NotificationManager::class.java)
+
+            if (m.getNotificationChannel(cI) == null) {
+                val c = NotificationChannel(cI, "DamselV5 Protection", NotificationManager.IMPORTANCE_HIGH)
+                c.setSound(null, null)
+                c.enableVibration(false)
+                m.createNotificationChannel(c)
+
             }
+
         }
 
-        val intent = Intent(this, MainActivity::class.java)
-        val pendingIntent = PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_IMMUTABLE)
+        val i = Intent(this, MainActivity::class.java)
+        val pI = PendingIntent.getActivity(this, 0, i, PendingIntent.FLAG_IMMUTABLE)
 
-        val title = if (currentCountdown > 0) "EMERGENCY IN $currentCountdown SECONDS!" 
-                    else if (currentCountdown == 0) "CALLING PRIMARY CONTACT..."
-                    else "DamselV5 Protection: $status"
+        var t = "DamselV5 Protection: " + st
 
-        val builder = Notification.Builder(this, channelId)
-            .setContentTitle(title)
-            .setContentText(if (currentCountdown >= 0) "Press button again to CANCEL" else "Connected to: $connectedDeviceName")
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setOngoing(true)
-            .setCategory(if (currentCountdown >= 0) Notification.CATEGORY_CALL else Notification.CATEGORY_SERVICE)
-            .setPriority(if (currentCountdown >= 0) Notification.PRIORITY_MAX else Notification.PRIORITY_DEFAULT)
-            .setContentIntent(pendingIntent)
+        if (cC > 0) {
+            t = "EMERGENCY IN " + cC + " SECONDS!"
 
-        if (currentCountdown >= 0) {
-            val prefs = getSharedPreferences("emergency_prefs", MODE_PRIVATE)
-            val callIntent = Intent(this, EmergencyCallActivity::class.java).apply {
-                putExtra("PHONE_NUMBER", prefs.getString("primary_number", ""))
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            val fullScreenPendingIntent = PendingIntent.getActivity(this, 1, callIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-            builder.setFullScreenIntent(fullScreenPendingIntent, true)
+        } else if (cC == 0) {
+            t = "CALLING PRIMARY CONTACT..."
+
         }
 
-        if (Build.VERSION.SDK_INT >= 36) {
-            val shortText = if (currentCountdown >= 0) "$currentCountdown" else status.take(4)
-            try {
-                val ongoingContentClass = Class.forName("android.app.Notification\$OngoingUpdateStyle\$OngoingContent")
-                val textContentClass = Class.forName("android.app.Notification\$OngoingUpdateStyle\$OngoingContent\$Text")
-                val textContent = textContentClass.getConstructor(CharSequence::class.java).newInstance(title)
-                val styleBuilderClass = Class.forName("android.app.Notification\$OngoingUpdateStyle\$Builder")
-                val styleBuilder = styleBuilderClass.getConstructor(ongoingContentClass).newInstance(textContent)
-                styleBuilderClass.getMethod("setShortCriticalText", CharSequence::class.java).invoke(styleBuilder, shortText)
-                val style = styleBuilderClass.getMethod("build").invoke(styleBuilder)
-                Notification.Builder::class.java.getMethod("setStyle", Notification.Style::class.java).invoke(builder, style)
-                Notification.Builder::class.java.getMethod("setRequestPromotedOngoing", Boolean::class.javaPrimitiveType).invoke(builder, true)
-            } catch (e: Exception) {
-                builder.extras.putBoolean("android.requestPromotedOngoing", true)
-            }
+        val builder = Notification.Builder(this, cI)
+        builder.setContentTitle(t)
+
+        if (cC >= 0) {
+            builder.setContentText("Press button again to CANCEL")
+
         } else {
-            builder.extras.putBoolean("android.requestPromotedOngoing", true)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                builder.setSubText(if (currentCountdown >= 0) "EMERGENCY" else status)
+            builder.setContentText("Connected to: " + cDN)
+
+        }
+        builder.setSmallIcon(android.R.drawable.ic_dialog_info)
+        builder.setOngoing(true)
+
+        if (cC >= 0) {
+            builder.setCategory(Notification.CATEGORY_CALL)
+            builder.setPriority(Notification.PRIORITY_MAX)
+
+        } else {
+            builder.setCategory(Notification.CATEGORY_SERVICE)
+            builder.setPriority(Notification.PRIORITY_DEFAULT)
+
+        }
+        builder.setContentIntent(pI)
+
+        if (cC >= 0) {
+            val pr = getSharedPreferences("emergency_prefs", MODE_PRIVATE)
+            val callI = Intent(this, EmergencyCallActivity::class.java)
+            callI.putExtra("PHONE_NUMBER", pr.getString("primary_number", ""))
+            callI.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            val fSPI = PendingIntent.getActivity(this, 1, callI, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            builder.setFullScreenIntent(fSPI, true)
+
+        }
+
+        builder.extras.putBoolean("android.requestPromotedOngoing", true)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+
+            if (cC >= 0) {
+                builder.setSubText("EMERGENCY")
+
+            } else {
+                builder.setSubText(st)
+
             }
+
         }
 
         return builder.build()
+
     }
 
-    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onBind(i: Intent?): IBinder? {
+        return null
+
+    }
+
 
     override fun onDestroy() {
         super.onDestroy()
-        unregisterReceiver(bluetoothStateReceiver)
-        serviceScope.cancel()
-        bleManager.disconnect()
-        handler.removeCallbacks(reconnectRunnable)
-        releaseWakeLock()
-        restoreVolume()
-        stopSiren()
+        unregisterReceiver(bSR)
+        sS.cancel()
+        bM.disconnect()
+        h.removeCallbacks(rR)
+        rWL()
+        rV()
+        sSiren()
         BleStatus.updateState("Disconnected")
+
     }
 
+
     companion object {
-        private const val NOTIFICATION_ID = 1001
+        private const val N_ID = 1001
         const val ACTION_STOP_SERVICE = "STOP_BLE_SERVICE"
         const val ACTION_SIMULATE_PANIC = "SIMULATE_PANIC_SIGNAL"
     }

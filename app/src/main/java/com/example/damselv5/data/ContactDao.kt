@@ -6,14 +6,14 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface ContactDao {
     @Query("SELECT * FROM contacts")
-    fun getAllContacts(): Flow<List<ContactEntity>>
+    fun gAC(): Flow<List<ContactEntity>>
 
     @Query("SELECT * FROM contacts")
-    suspend fun getAllContactsSync(): List<ContactEntity>
+    suspend fun gACS(): List<ContactEntity>
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
-    suspend fun insertContact(contact: ContactEntity): Long
+    suspend fun iC(c: ContactEntity): Long
 
     @Delete
-    suspend fun deleteContact(contact: ContactEntity)
+    suspend fun dC(c: ContactEntity)
 }
